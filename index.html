@@ -80,6 +80,8 @@ td.n{width:36px;color:var(--muted);font-weight:400}
   border-radius:18px;box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;text-align:center;padding:28px;
   font-size:clamp(20px,4.6vw,30px);overflow:auto;word-break:break-word}
 .face.back{transform:rotateY(180deg)}
+.pron{font-size:.62em;color:var(--muted);margin-top:8px;font-style:italic}
+td .pron{font-size:13px;margin-top:2px}
 .face .hint{position:absolute;top:12px;left:16px;font-size:13px;color:var(--muted)}
 .flip.swl .face{border-color:var(--bad)} .flip.swr .face{border-color:var(--ok)}
 .study-btns{display:grid;grid-template-columns:auto 1fr 1fr auto;gap:10px;margin-top:14px}
@@ -228,27 +230,31 @@ async function firebaseStore(cfg){
 }
 
 /* ---------- Разбор вставленного списка ---------- */
-function splitLine(line, sep){
-  const at=(re)=>{ const m=line.match(re); return m?[line.slice(0,m.index),line.slice(m.index+m[0].length)]:null; };
-  switch(sep){
-    case "tab": return at(/\t+/);
-    case "dash": return at(/\s+[-–—]\s+/) || at(/[–—]/);
-    case "semicolon": return at(/\s*;\s*/);
-    case "comma": return at(/\s*,\s*/);
-    case "colon": return at(/\s*:\s*/);
-    default: return at(/\t+/) || at(/\s+[-–—]\s+/) || at(/[–—]/) || at(/\s*;\s*/) || at(/\s*:\s*/);
-  }
+const SEP_RE={tab:/\t+/, dash:/\s+[-–—]\s+|[–—]/, semicolon:/\s*;\s*/, colon:/\s*:\s*/, comma:/\s*,\s*/};
+function splitN(line, re, n){
+  const parts=[]; let rest=line;
+  while(parts.length<n-1){ const m=rest.match(re); if(!m) break; parts.push(rest.slice(0,m.index)); rest=rest.slice(m.index+m[0].length); }
+  parts.push(rest); return parts;
 }
-function parseCards(text, sep){
+function splitLine(line, sep, n){
+  for(const k of (sep==="auto"?["tab","dash","semicolon","colon"]:[sep])) if(SEP_RE[k].test(line)) return splitN(line,SEP_RE[k],n);
+  return null;
+}
+/* cols=2: термин | определение; cols=3: термин | произношение | определение
+   (строка только из двух частей в режиме 3 тоже принимается - без произношения) */
+function parseCards(text, sep, cols){
   const cards=[], bad=[];
   text.split(/\r?\n/).forEach((raw,i)=>{
     if(!raw.trim()) return;
-    const p=splitLine(raw.replace(/^\s+|\s+$/g,m=>m.replace(/[^\t]/g,"")), sep);
-    const t=p&&p[0].trim(), d=p&&p[1].trim();
-    if(t&&d) cards.push({id:hash(t+"\u0001"+d),t,d}); else bad.push(i+1);
+    const parts=splitLine(raw.replace(/^\s+|\s+$/g,m=>m.replace(/[^\t]/g,"")), sep, cols);
+    if(!parts||parts.length<2) return bad.push(i+1);
+    const f=parts.map(x=>x.trim()), t=f[0], d=f[f.length-1], pr=f.length===3?f[1]:"";
+    if(t&&d){ const c={id:hash(t+"\u0001"+d),t,d}; if(pr) c.p=pr; cards.push(c); } else bad.push(i+1);
   });
   return {cards,bad};
 }
+const hasPron=cards=>cards.some(c=>c.p);
+const pronHtml=c=>c.p?`<div class="pron">${esc(c.p)}</div>`:"";
 
 /* ---------- Шапка ---------- */
 function renderHeader(){
@@ -339,14 +345,18 @@ async function viewEditor(id){
   let s={title:"",description:"",cards:[],public:false};
   if(id){ loading(); const x=await store.getSet(id);
     if(!x||x.ownerId!==user.uid){ app.innerHTML=`<div class="err">Набор не найден или вы не его автор</div>`; return; } s=x; }
-  const useTab=s.cards.some(c=>/\s[-–—]\s|[–—]/.test(c.t));
-  const text=s.cards.map(c=>c.t+(useTab?"\t":" - ")+c.d).join("\n");
+  const cols0=hasPron(s.cards)?3:2;
+  const useTab=s.cards.some(c=>/\s[-–—]\s|[–—]/.test(c.t+" "+(c.p||"")));
+  const j=useTab?"\t":" - ";
+  const text=s.cards.map(c=>cols0===3?c.t+j+(c.p||"")+j+c.d:c.t+j+c.d).join("\n");
   app.innerHTML=`<h1>${id?"Изменить набор":"Новый набор"}</h1>
   <div class="panel">
     <label for="ti">Название</label><input type="text" id="ti" maxlength="200" value="${esc(s.title)}" placeholder="Например: Английский - неделя 1">
     <label for="de">Описание <span class="muted small">(необязательно)</span></label><input type="text" id="de" maxlength="500" value="${esc(s.description)}">
     <label for="tx">Карточки - по одной на строку</label>
-    <p class="muted small" style="margin:0 0 8px">Формат: <code>термин - определение</code>. Подходит и список из Excel или экспорт из Quizlet (через табуляцию).</p>
+    <div class="row" style="margin:0 0 8px"><span class="small muted">Формат строки:</span>
+      <span class="seg" id="cols"><button data-c="2">термин - определение</button><button data-c="3">термин - произношение - определение</button></span></div>
+    <p class="muted small" style="margin:0 0 8px" id="fh"></p>
     <textarea id="tx" placeholder="apple - яблоко&#10;dog - собака&#10;house - дом">${esc(text)}</textarea>
     <div class="row" style="margin-top:10px"><span class="small muted">Разделитель:</span>
       <select id="sp" style="width:auto"><option value="auto">Определить автоматически</option><option value="tab">Табуляция (Excel, Quizlet)</option>
@@ -356,11 +366,17 @@ async function viewEditor(id){
   <h2 id="ph">Предпросмотр</h2><div id="pv"></div>
   <div class="row" style="margin-top:18px"><button class="btn primary" id="sv">Сохранить</button><a class="btn" href="${id?"#/set/"+id:"#/"}">Отмена</a></div><div id="e"></div>`;
   if(useTab) $("#sp").value="tab";
+  let cols=cols0;
+  const setCols=c=>{ cols=c; $$("#cols button").forEach(b=>b.classList.toggle("on",+b.dataset.c===c));
+    $("#fh").innerHTML=c===3?"Например: <code>apple - [ˈæpəl] - яблоко</code>. Произношение необязательно: строки вида <code>термин - определение</code> тоже подойдут. Из Excel - три столбца.":"Например: <code>apple - яблоко</code>. Подходит и список из Excel или экспорт из Quizlet (через табуляцию).";
+    $("#tx").placeholder=c===3?"apple - [ˈæpəl] - яблоко\ndog - [dɒɡ] - собака\nhouse - [haʊs] - дом":"apple - яблоко\ndog - собака\nhouse - дом"; };
+  $$("#cols button").forEach(b=>b.onclick=()=>{ setCols(+b.dataset.c); upd(); });
+  setCols(cols);
   const upd=()=>{
-    const {cards,bad}=parseCards($("#tx").value,$("#sp").value);
+    const {cards,bad}=parseCards($("#tx").value,$("#sp").value,cols);
     $("#ph").textContent="Предпросмотр: "+plural(cards.length,"карточка","карточки","карточек");
     $("#pv").innerHTML=(bad.length?`<div class="err">Не распознаны строки: ${bad.slice(0,15).join(", ")}${bad.length>15?"…":""}. Проверьте разделитель между термином и определением.</div>`:"")+
-      (cards.length?`<div class="panel" style="padding:4px 8px"><table>${cards.slice(0,300).map((c,i)=>`<tr><td class="n">${i+1}</td><td>${esc(c.t)}</td><td>${esc(c.d)}</td></tr>`).join("")}</table>${cards.length>300?`<p class="muted small center">…и ещё ${cards.length-300}</p>`:""}</div>`:"");
+      (cards.length?`<div class="panel" style="padding:4px 8px"><table>${cards.slice(0,300).map((c,i)=>`<tr><td class="n">${i+1}</td><td>${esc(c.t)}</td>${cols===3?`<td class="muted">${esc(c.p||"")}</td>`:""}<td>${esc(c.d)}</td></tr>`).join("")}</table>${cards.length>300?`<p class="muted small center">…и ещё ${cards.length-300}</p>`:""}</div>`:"");
     return {cards,bad};
   };
   $("#tx").oninput=upd; $("#sp").onchange=upd; upd();
@@ -406,7 +422,7 @@ async function viewSet(id){
       ${own?`<button class="btn ghost danger" id="dl">Удалить</button>`:""}
     </div>
     <h2>Все карточки</h2>
-    <div class="panel" style="padding:4px 8px"><table>${s.cards.map(c=>`<tr><td>${esc(c.t)}</td><td>${esc(c.d)}</td></tr>`).join("")}</table></div>`;
+    <div class="panel" style="padding:4px 8px"><table>${s.cards.map(c=>`<tr><td>${esc(c.t)}${pronHtml(c)}</td><td>${esc(c.d)}</td></tr>`).join("")}</table></div>`;
   const sh=$("#sh"); if(sh) sh.onclick=async()=>{
     if(store.demo) return toast("Делиться можно после подключения Firebase");
     if(!s.public) return toast("Сначала включите «Доступ по ссылке» в настройках набора");
@@ -426,7 +442,8 @@ async function viewCards(id){
   const s=await loadSet(id); if(!s) return;
   const prog=await store.getProgress(id);
   const known=new Set(prog.known||[]);
-  const opt=LS.get("kartochki_cards_opts",{front:"t",shuffle:false,onlyNew:false});
+  const opt={pron:"front",...LS.get("kartochki_cards_opts",{front:"t",shuffle:false,onlyNew:false})};
+  const withPron=hasPron(s.cards);
   let order=[], i=0, flipped=false, round={k:0,u:0}, unknownIds=[];
   const start=(list)=>{
     let cards=list||s.cards;
@@ -437,14 +454,18 @@ async function viewCards(id){
   const seg=(key,vals)=>`<span class="seg">${vals.map(([v,l])=>`<button data-o="${key}" data-v="${v}" class="${String(opt[key])===String(v)?"on":""}">${l}</button>`).join("")}</span>`;
   function render(){
     if(i>=order.length) return renderEnd();
-    const c=order[i], F=opt.front==="t"?[c.t,c.d,"Термин","Определение"]:[c.d,c.t,"Определение","Термин"];
+    const c=order[i], term=`<div>${esc(c.t)}</div>`, def=`<div>${esc(c.d)}</div>`;
+    const F=opt.front==="t"
+      ? [term+(opt.pron==="front"?pronHtml(c):""), (opt.pron==="back"&&c.p?`<div class="pron" style="margin:0 0 12px">${esc(c.p)}</div>`:"")+def, "Термин", c.p&&opt.pron==="back"?"Произношение и определение":"Определение"]
+      : [def, term+pronHtml(c), "Определение", "Термин"];
     app.innerHTML=`<div class="study-top"><a class="small" href="#/set/${id}">← ${esc(s.title)}</a><span class="muted small">${i+1} / ${order.length}</span></div>
       <div class="flip noanim ${flipped?"flipped":""}" id="card"><div class="inner">
-        <div class="face front"><span class="hint">${F[2]}${known.has(c.id)?" · знаю":""}</span><div>${esc(F[0])}</div></div>
-        <div class="face back"><span class="hint">${F[3]}</span><div>${esc(F[1])}</div></div></div></div>
+        <div class="face front"><span class="hint">${F[2]}${known.has(c.id)?" · знаю":""}</span><div>${F[0]}</div></div>
+        <div class="face back"><span class="hint">${F[3]}</span><div>${F[1]}</div></div></div></div>
       <p class="center muted small" style="margin:8px 0 0">Нажмите на карточку, чтобы перевернуть${matchMedia("(hover:none)").matches?" · смахните вправо - знаю, влево - не знаю":" · пробел, ← →, 1 - не знаю, 2 - знаю"}</p>
       <div class="study-btns"><button class="btn nav" id="pv" ${i?"":"disabled"}>←</button><button class="btn dont" id="no">Не знаю</button><button class="btn know" id="yes">Знаю</button><button class="btn nav" id="nx">→</button></div>
       <div class="row" style="margin-top:18px;justify-content:center"><span class="small muted">Сначала:</span>${seg("front",[["t","Термин"],["d","Определение"]])}
+      ${withPron&&opt.front==="t"?`<span class="small muted">Произношение:</span>${seg("pron",[["front","Сразу"],["back","После переворота"]])}`:""}
       ${seg("shuffle",[[false,"По порядку"],[true,"Перемешать"]])}${seg("onlyNew",[[false,"Все"],[true,"Только невыученные"]])}</div>`;
     requestAnimationFrame(()=>$("#card")?.classList.remove("noanim"));
     const card=$("#card");
@@ -459,7 +480,7 @@ async function viewCards(id){
     $("#pv").onclick=()=>{ if(i>0){ i--; flipped=false; render(); } };
     $("#nx").onclick=()=>{ i++; flipped=false; render(); };
     $$("[data-o]").forEach(b=>b.onclick=()=>{ const k=b.dataset.o, v=b.dataset.v; opt[k]=v==="true"?true:v==="false"?false:v; LS.set("kartochki_cards_opts",opt);
-      if(k==="front") render(); else start(); });
+      if(k==="front"||k==="pron") render(); else start(); });
   }
   function flip(){ flipped=!flipped; $("#card")?.classList.toggle("flipped",flipped); }
   function mark(k){
@@ -498,24 +519,30 @@ async function viewTest(id){
   const s=await loadSet(id); if(!s) return;
   if(s.cards.length<2){ app.innerHTML=`<p class="small"><a href="#/set/${id}">← Назад</a></p><div class="panel">Для теста нужно хотя бы 2 карточки.</div>`; return; }
   const opt=LS.get("kartochki_test_opts",{n:"10",dir:"td"});
+  const pronCards=s.cards.filter(c=>c.p), withPron=new Set(pronCards.map(c=>c.p)).size>=2;
+  if(opt.dir==="tp"&&!withPron) opt.dir="td";
   let qs=[], qi=0, answered=false, wrong=[], right=0;
   function setup(){
     const N=s.cards.length;
     const seg=(key,vals)=>`<span class="seg">${vals.map(([v,l])=>`<button data-o="${key}" data-v="${v}" class="${opt[key]===v?"on":""}">${l}</button>`).join("")}</span>`;
     app.innerHTML=`<p class="small"><a href="#/set/${id}">← ${esc(s.title)}</a></p><h1>Тест</h1>
       <div class="panel"><label>Количество вопросов</label>${seg("n",[...["10","20"].filter(v=>+v<N).map(v=>[v,v]),["all","Все ("+N+")"]])}
-      <label>Что спрашивать</label>${seg("dir",[["td","Термин → определение"],["dt","Определение → термин"],["mix","Вперемешку"]])}
+      <label>Что спрашивать</label>${seg("dir",[["td","Термин → определение"],["dt","Определение → термин"],...(withPron?[["tp","Термин → произношение"]]:[]),["mix","Вперемешку"]])}
       <div style="margin-top:20px"><button class="btn primary" id="go">Начать</button></div></div>`;
     if(opt.n!=="all"&&+opt.n>=N) opt.n="all";
     $$("[data-o]").forEach(b=>b.onclick=()=>{ opt[b.dataset.o]=b.dataset.v; LS.set("kartochki_test_opts",opt); setup(); });
-    $("#go").onclick=()=>begin(shuffle(s.cards).slice(0,opt.n==="all"?N:+opt.n));
+    $("#go").onclick=()=>{ const src=opt.dir==="tp"?pronCards:s.cards; begin(shuffle(src).slice(0,opt.n==="all"?src.length:+opt.n)); };
   }
   function begin(cards){
     qs=cards.map(c=>{
       const dir=opt.dir==="mix"?(Math.random()<.5?"td":"dt"):opt.dir;
-      const ask=dir==="td"?c.t:c.d, ans=dir==="td"?c.d:c.t;
-      const pool=[...new Set(s.cards.map(x=>dir==="td"?x.d:x.t))].filter(x=>x!==ans);
-      return {card:c,dir,ask,ans,options:shuffle([ans,...shuffle(pool).slice(0,3)])};
+      const field=dir==="td"?"d":dir==="dt"?"t":"p", ask=dir==="dt"?c.d:c.t, ans=c[field];
+      const pool=[...new Set(s.cards.map(x=>x[field]).filter(Boolean))].filter(x=>x!==ans);
+      // термин в вопросе показываем с произношением (кроме вопроса о самом произношении)
+      const askHtml=esc(ask)+(dir==="td"?pronHtml(c):"");
+      // варианты-термины показываем с произношением
+      const optHtml=o=>{ if(dir!=="dt") return esc(o); const pc=s.cards.find(x=>x.t===o&&x.p); return esc(o)+(pc?` <span class="muted small">${esc(pc.p)}</span>`:""); };
+      return {card:c,dir,ask,askHtml,ans,optHtml,options:shuffle([ans,...shuffle(pool).slice(0,3)])};
     });
     qi=0; wrong=[]; right=0; renderQ();
   }
@@ -524,9 +551,9 @@ async function viewTest(id){
     answered=false; const q=qs[qi];
     app.innerHTML=`<div class="study-top"><a class="small" href="#/set/${id}">← ${esc(s.title)}</a><span class="muted small">${qi+1} / ${qs.length}</span></div>
       <div class="progress"><i style="width:${qi/qs.length*100}%;background:var(--accent)"></i></div>
-      <div class="panel question"><div class="muted small" style="margin-bottom:8px">${q.dir==="td"?"Термин":"Определение"}</div>${esc(q.ask)}</div>
-      <p class="muted small" style="margin:14px 0 0">Выберите ${q.dir==="td"?"определение":"термин"}:</p>
-      <div class="opts">${q.options.map((o,k)=>`<button class="opt" data-k="${k}"><span class="k">${k+1}</span> ${esc(o)}</button>`).join("")}</div>
+      <div class="panel question"><div class="muted small" style="margin-bottom:8px">${q.dir==="dt"?"Определение":"Термин"}</div>${q.askHtml}</div>
+      <p class="muted small" style="margin:14px 0 0">Выберите ${{td:"определение",dt:"термин",tp:"произношение"}[q.dir]}:</p>
+      <div class="opts">${q.options.map((o,k)=>`<button class="opt" data-k="${k}"><span class="k">${k+1}</span> ${q.optHtml(o)}</button>`).join("")}</div>
       <div id="nxw" style="margin-top:14px"></div>`;
     $$(".opt").forEach(b=>b.onclick=()=>pick(+b.dataset.k));
   }
@@ -546,7 +573,7 @@ async function viewTest(id){
       <p>Правильно ${right} из ${qs.length}</p>
       <div class="row" style="justify-content:center;margin-top:12px">${wrong.length?`<button class="btn primary" id="rw">Повторить ошибки (${wrong.length})</button>`:""}
       <button class="btn" id="ag">Новый тест</button><a class="btn" href="#/set/${id}/cards">Карточки</a></div></div>
-      ${wrong.length?`<h2>Ошибки</h2><div class="panel" style="padding:4px 8px"><table>${wrong.map(w=>`<tr><td>${esc(w.ask)}</td><td><span style="color:var(--ok)">${esc(w.ans)}</span><br><span class="muted small">ваш ответ: ${esc(w.given)}</span></td></tr>`).join("")}</table></div>`:""}`;
+      ${wrong.length?`<h2>Ошибки</h2><div class="panel" style="padding:4px 8px"><table>${wrong.map(w=>`<tr><td>${w.askHtml}</td><td><span style="color:var(--ok)">${esc(w.ans)}</span><br><span class="muted small">ваш ответ: ${esc(w.given)}</span></td></tr>`).join("")}</table></div>`:""}`;
     const rw=$("#rw"); if(rw) rw.onclick=()=>begin(shuffle(wrong.map(w=>w.card)));
     $("#ag").onclick=setup;
   }
