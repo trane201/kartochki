@@ -16,7 +16,8 @@
 |---|---|
 | `index.html` | Всё приложение: стили, разметка, JS-модуль (~2000 строк). |
 | `config.js` | `window.FIREBASE_CONFIG` - настройки Firebase. Ключ публичный по замыслу Firebase, не секрет. Не удалять и не переименовывать. |
-| `sw.js` | Service worker для офлайн-режима: страница «сначала сеть», библиотеки Firebase с gstatic - из кэша. |
+| `sw.js` | Service worker для офлайн-режима: страница «сначала сеть», библиотеки Firebase с gstatic - из кэша. При установке сразу кэширует `config.js` и модули Firebase (версия в `FB` должна совпадать с `FB_VERSION` в `index.html`). |
+| `icon-180.png` | Иконка для экрана «Домой» на iPhone (`apple-touch-icon`). |
 | `hanzi.json` | Разбор иероглифов: `{"休": "⿰亻木|亻"}` = состав (IDS) + ключ. Данные Make Me a Hanzi (9574 знака). Грузится лениво. |
 | `xlsx.mini.min.js` | SheetJS 0.18.5 (npm) для импорта/экспорта Excel. Грузится лениво. |
 | `firestore.rules` | Правила доступа к базе. **Сами не применяются** - см. «Правила базы». |
@@ -28,6 +29,7 @@
 - Хранилища: `demoStore()` (localStorage, когда нет ключа) и `firebaseStore()` (Auth по почте + Firestore с офлайн-кэшем). Общий интерфейс: `mySets, sharedSets, getSet, saveSet, deleteSet, getProgress, saveProgress, resetProgress, studying, removeStudying, getStats, saveStats`.
 - `loadDeck(ids, starOnly)` - колода из одного/нескольких наборов (`ids` через запятую или `all`) + личный прогресс; методы `isKnown/setKnown, srs/setSrs, isStar/toggleStar, miss`, сохранение с задержкой.
 - Маршрутизация по хэшу: `#/`, `#/login`, `#/new`, `#/edit/ID`, `#/set/ID`, `#/stats`, `#/study/IDS/РЕЖИМ[/star]`.
+  В `route()` страницы вызываются через `return await` (иначе ошибка оставит вечную «Загрузку»); после каждого `await` в странице проверять `alive()`. `leaveGuard` - вопрос «уйти без сохранения?» (редактор).
 - Режимы (`viewStudy` → функция режима): `review` (интервальное повторение, упрощённый SM-2), `cards`, `test`, `write`, `listen`, `tones`, `speak` (распознавание речи), `match`, `exam`, `endless`.
 - **Общий механизм вопросов** `runQuiz` + генератор `makeQ(type, card, deck, {exam})` с типами `QT`: `td, dt, tp` (тест), `wtp, wdt, wtd` (ввод), `lt, ld` (аудирование), `tone`. Тест/ввод/аудирование/тоны/экзамен/бесконечный построены на нём. Новый тип вопроса = запись в `QT` + ветка в `makeQ`.
 - `alive()` - защита отложенных действий от смены страницы (обязательно для setTimeout/колбэков в режимах).
@@ -37,8 +39,9 @@
 - `sets/{id}`: `title, description, folder, lang, cards[{id,t,p?,d,n?}], public, shared, ownerId, createdAt, updatedAt`.
   `t` - термин, `p` - произношение, `d` - определение, `n` - заметка. `id` карточки сохраняется при правке (на нём держится прогресс).
 - `users/{uid}/progress/{setId}`: `known[], srs{cardId:{reps,int,ease,lapses,due}}, miss{cardId:n}, starred[], title?, opened?` - личный прогресс.
-  `due` - номер дня (локальная дата / 86400000). Пишется через `setDoc(..., {merge:true})`: ключи в map не удаляются, поэтому полный сброс - `resetProgress`.
-- `users/{uid}/meta/stats`: `days{"YYYY-MM-DD":{n,ok}}`.
+  `due` - номер дня (локальная дата / 86400000). Пишется **только изменениями** (`saveProgress(id, patch)`, patch = `{knownAdd, knownDel, starAdd, starDel, srs:{изменённые}, miss:{изменённые}, title?, opened?}`): в Firestore - `arrayUnion/arrayRemove` и `setDoc(..., {merge:true})`, локально - `applyPatch`. Так iPhone и компьютер не затирают отметки друг друга. Целые списки не писать. Ключи в map не удаляются, поэтому полный сброс - `resetProgress` (звёздочки при сбросе сохраняются).
+- `users/{uid}/meta/stats`: `days{"YYYY-MM-DD":{n,ok}}`. Счётчики прибавляются через `increment` (`statsPend` - ещё не отправленные ответы), а не перезаписываются.
+- Прогресс гостя (набор открыт по ссылке без входа) хранится в localStorage и при входе переносится в аккаунт (`moveGuestProgress`).
 - Наборы администратора автоматически `shared:true, public:true` и видны всем в разделе «Общие наборы» (запрос `where shared==true && public==true`).
 
 ### Правила базы

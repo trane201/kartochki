@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Карточки">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#4255ff">
+<link rel="apple-touch-icon" href="icon-180.png">
 <title>Карточки</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='6' y='14' width='44' height='34' rx='6' fill='%23aab4ff'/%3E%3Crect x='14' y='8' width='44' height='34' rx='6' fill='%234255ff'/%3E%3C/svg%3E">
 <style>
@@ -164,6 +165,7 @@ td.acts{width:84px;text-align:right;white-space:nowrap;padding:4px}
 .cedit{display:grid;gap:8px;padding:8px 0}
 .cedit input,.cedit textarea{padding:8px 10px}
 .cedit textarea{min-height:60px;font-family:inherit;font-size:15px}
+@media (hover:none){ textarea,.cedit textarea{font-size:16px} }   /* иначе iPhone приближает страницу при вводе */
 .match{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
 .mt{min-height:96px;border:2px solid var(--line);background:var(--panel);color:var(--text);border-radius:12px;font:inherit;font-size:15px;padding:8px;cursor:pointer;
   word-break:break-word;transition:opacity .3s,transform .3s,border-color .15s,background .15s}
@@ -247,7 +249,7 @@ const dayStr = n => new Date(n*864e5).toISOString().slice(0,10);         // но
 const fmtDay = n => new Date(n*864e5).toLocaleDateString("ru-RU",{day:"numeric",month:"short",timeZone:"UTC"});
 
 /* ---------- Настройки (в браузере) ---------- */
-const settings = { tones:true, autoSpeak:false, front:"t", pron:"front", shuffle:false, onlyNew:false, decomp:false, sound:true, showPron:true, sayAsk:true, toneSound:false, ...LS.get("kartochki_settings",{}) };
+const settings = { tones:true, autoSpeak:false, front:"t", revFront:"t", pron:"front", shuffle:false, onlyNew:false, decomp:false, sound:true, showPron:true, sayAsk:true, toneSound:false, ...LS.get("kartochki_settings",{}) };
 const saveSettings = () => LS.set("kartochki_settings", settings);
 
 /* ---------- Пиньинь: тоны, цвета, сравнение ---------- */
@@ -340,12 +342,26 @@ const localProg = {
   K: "kartochki_progress_v1",
   all(){ return LS.get(this.K, {}); },
   get(id){ return this.all()[id] || { known: [] }; },
-  set(id, p){ const a=this.all(); a[id]={...(a[id]||{}),...p}; LS.set(this.K,a); },
+  set(id, p){ const a=this.all(); a[id]=applyPatch(a[id]||{known:[]},p); LS.set(this.K,a); },
   reset(id, p){ const a=this.all(); a[id]=p; LS.set(this.K,a); },
   list(){ return Object.entries(this.all()).map(([id,v])=>({id,...v})); },
   remove(id){ const a=this.all(); delete a[id]; LS.set(this.K,a); }
 };
-const localStats = { get(){ return LS.get("kartochki_stats_v1",{days:{}}); }, save(s){ const a=this.get(); a.days={...a.days,...(s.days||{})}; LS.set("kartochki_stats_v1",a); } };
+const localStats = { get(){ return LS.get("kartochki_stats_v1",{days:{}}); },
+  add(pend){ const a=this.get(); for(const [d,v] of Object.entries(pend)){ const c=a.days[d]||{n:0,ok:0}; a.days[d]={n:c.n+v.n,ok:c.ok+v.ok}; } LS.set("kartochki_stats_v1",a); } };
+/* Изменения прогресса передаются «разницей», а не целыми списками: так iPhone и компьютер не затирают отметки друг друга.
+   patch: {knownAdd, knownDel, starAdd, starDel: [id карточек], srs:{id:{...}}, miss:{id:n}, title?, opened?} */
+function applyPatch(p, patch){
+  p={known:[],...p};
+  const upd=(list,add,del)=>{ const st=new Set(list||[]); (add||[]).forEach(x=>st.add(x)); (del||[]).forEach(x=>st.delete(x)); return [...st]; };
+  if(patch.knownAdd||patch.knownDel) p.known=upd(p.known,patch.knownAdd,patch.knownDel);
+  if(patch.starAdd||patch.starDel) p.starred=upd(p.starred,patch.starAdd,patch.starDel);
+  if(patch.srs) p.srs={...(p.srs||{}),...patch.srs};
+  if(patch.miss) p.miss={...(p.miss||{}),...patch.miss};
+  if(patch.title!=null) p.title=patch.title;
+  if(patch.opened!=null) p.opened=patch.opened;
+  return p;
+}
 
 function demoStore(){
   const K="kartochki_demo_sets_v1";
@@ -366,7 +382,7 @@ function demoStore(){
     async sharedSets(){ return []; },
     async removeStudying(id){ localProg.remove(id); },
     async getStats(){ return localStats.get(); },
-    saveStats(s){ localStats.save(s); }
+    saveStats(pend){ localStats.add(pend); }
   };
 }
 
@@ -374,6 +390,7 @@ async function firebaseStore(cfg){
   const base=`https://www.gstatic.com/firebasejs/${FB_VERSION}/`;
   const [A0,A,F]=await Promise.all([import(base+"firebase-app.js"),import(base+"firebase-auth.js"),import(base+"firebase-firestore.js")]);
   const fapp=A0.initializeApp(cfg), auth=A.getAuth(fapp);
+  auth.languageCode="ru";   // письма (сброс пароля) - на русском
   let db;
   // локальный кэш базы: наборы и прогресс доступны без интернета, изменения уходят на сервер при появлении связи
   try{ db=F.initializeFirestore(fapp,{localCache:F.persistentLocalCache({tabManager:F.persistentMultipleTabManager()})}); }
@@ -411,7 +428,20 @@ async function firebaseStore(cfg){
       if(!me) return localProg.get(id);
       try{ const s=await get(progDoc(id)); return s.exists()?{known:[],...s.data()}:{known:[]}; }catch{ return {known:[]}; }
     },
-    saveProgress(id,p){ if(!me) return localProg.set(id,p); bg(F.setDoc(progDoc(id),p,{merge:true})); },
+    saveProgress(id,patch){
+      if(!me) return localProg.set(id,patch);
+      // добавления и удаления в одном поле нельзя записать одной операцией - поэтому две записи в одном пакете
+      const a={}, b={}, has=o=>o&&Object.keys(o).length;
+      if(patch.knownAdd?.length) a.known=F.arrayUnion(...patch.knownAdd);
+      if(patch.starAdd?.length) a.starred=F.arrayUnion(...patch.starAdd);
+      if(patch.knownDel?.length) b.known=F.arrayRemove(...patch.knownDel);
+      if(patch.starDel?.length) b.starred=F.arrayRemove(...patch.starDel);
+      if(has(patch.srs)) a.srs=patch.srs;
+      if(has(patch.miss)) a.miss=patch.miss;
+      if(patch.title!=null) a.title=patch.title;
+      if(patch.opened!=null) a.opened=patch.opened;
+      const w=F.writeBatch(db); w.set(progDoc(id),a,{merge:true}); if(has(b)) w.set(progDoc(id),b,{merge:true}); bg(w.commit());
+    },
     async resetProgress(id,p){ if(!me) return localProg.reset(id,p); bg(F.setDoc(progDoc(id),p)); },
     async sharedSets(){
       const snap=await F.getDocs(F.query(F.collection(db,"sets"),F.where("shared","==",true),F.where("public","==",true)));
@@ -424,7 +454,9 @@ async function firebaseStore(cfg){
     },
     async removeStudying(id){ if(!me) return localProg.remove(id); bg(F.deleteDoc(progDoc(id))); },
     async getStats(){ if(!me) return localStats.get(); try{ const s=await get(F.doc(db,"users",me.uid,"meta","stats")); return s.exists()?{days:{},...s.data()}:{days:{}}; }catch{ return {days:{}}; } },
-    saveStats(st){ if(!me) return localStats.save(st); bg(F.setDoc(F.doc(db,"users",me.uid,"meta","stats"),st,{merge:true})); }
+    saveStats(pend){ if(!me) return localStats.add(pend);
+      const days={}; for(const [d,v] of Object.entries(pend)) days[d]={n:F.increment(v.n),ok:F.increment(v.ok)};   // прибавляем, а не перезаписываем
+      bg(F.setDoc(F.doc(db,"users",me.uid,"meta","stats"),{days},{merge:true})); }
   };
 }
 
@@ -435,13 +467,14 @@ async function sharedSetsC(){ try{ const l=await store.sharedSets(); l.forEach(s
 async function mySetsC(){ if(!user) return []; const l=await store.mySets(); l.forEach(s=>setCache.set(s.id,s)); return l; }
 
 /* ---------- Статистика занятий ---------- */
-let stats={days:{}}, statsDirty=null;
-function recordAnswer(ok){
-  const d=dayStr(today()), cur=stats.days[d]||{n:0,ok:0};
-  stats.days[d]={n:cur.n+1,ok:cur.ok+(ok?1:0)};
+let stats={days:{}}, statsPend={}, statsDirty=null;   // statsPend - ответы, ещё не отправленные на сервер
+function bumpDay(days,d,n,ok){ const c=days[d]||{n:0,ok:0}; days[d]={n:c.n+n,ok:c.ok+ok}; }
+function recordAnswer(ok, fix){                    // fix - «засчитать»: ответ уже учтён как неверный, добавляем только «верно»
+  const d=dayStr(today()), n=fix?0:1, k=ok?1:0;
+  bumpDay(stats.days,d,n,k); bumpDay(statsPend,d,n,k);
   clearTimeout(statsDirty); statsDirty=setTimeout(flushStats,2000);
 }
-function flushStats(){ clearTimeout(statsDirty); statsDirty=null; const d=dayStr(today()); if(stats.days[d]) store.saveStats({days:{[d]:stats.days[d]}}); }
+function flushStats(){ clearTimeout(statsDirty); statsDirty=null; if(!Object.keys(statsPend).length) return; const p=statsPend; statsPend={}; store.saveStats(p); }
 function streak(){ let n=0, d=today(); if(!stats.days[dayStr(d)]) d--; while(stats.days[dayStr(d)]?.n){ n++; d--; } return n; }
 
 /* ---------- Интервальное повторение (упрощённый SM-2) ---------- */
@@ -548,28 +581,38 @@ async function resolveIds(idsStr){
   return [...new Set([...m.map(s=>s.id),...st.map(s=>s.id)])];
 }
 async function loadDeck(idsStr, starOnly){
+  const lv=alive();
   const ids=await resolveIds(idsStr);
   const sets=(await Promise.all(ids.map(getSetC))).filter(Boolean);
-  if(!sets.length){ notFound(); return null; }
-  const progs={}, own={}, timers={};
+  if(!sets.length){ if(lv()) notFound(); return null; }
+  const progs={}, own={}, timers={}, dirty={};
   await Promise.all(sets.map(async s=>{ const p=await store.getProgress(s.id);
     progs[s.id]={known:new Set(p.known||[]),srs:p.srs||{},miss:p.miss||{},starred:new Set(p.starred||[])}; own[s.id]=!!user&&s.ownerId===user.uid; }));
   let cards=[]; sets.forEach(s=>s.cards.forEach(c=>cards.push({...c,sid:s.id,lang:s.lang||"auto"})));
   if(starOnly){ cards=cards.filter(c=>progs[c.sid].starred.has(c.id));
-    if(!cards.length){ app.innerHTML=`<p class="small"><a href="#/">← Назад</a></p><div class="panel">Отмеченных карточек нет. Отмечайте трудные карточки звёздочкой ☆ во время занятий или в списке карточек.</div>`; return null; } }
-  const flush=sid=>{ clearTimeout(timers[sid]); delete timers[sid]; const p=progs[sid], s=sets.find(x=>x.id===sid);
-    store.saveProgress(sid,{known:[...p.known],srs:p.srs,miss:p.miss,starred:[...p.starred],...(own[sid]?{}:{title:s.title,opened:Date.now()})}); };
+    if(!cards.length){ if(lv()) app.innerHTML=`<p class="small"><a href="#/">← Назад</a></p><div class="panel">Отмеченных карточек нет. Отмечайте трудные карточки звёздочкой ☆ во время занятий или в списке карточек.</div>`; return null; } }
+  // dirty[sid] - что изменилось с последней записи; на сервер уходят только эти изменения
+  const mark=(sid,kind,id)=>{ const d=dirty[sid]||={known:new Set(),starred:new Set(),srs:new Set(),miss:new Set()}; d[kind].add(id); };
+  const flush=sid=>{ clearTimeout(timers[sid]); delete timers[sid]; const d=dirty[sid]; if(!d) return; delete dirty[sid];
+    const p=progs[sid], s=sets.find(x=>x.id===sid), patch={};
+    if(d.known.size){ patch.knownAdd=[...d.known].filter(x=>p.known.has(x)); patch.knownDel=[...d.known].filter(x=>!p.known.has(x)); }
+    if(d.starred.size){ patch.starAdd=[...d.starred].filter(x=>p.starred.has(x)); patch.starDel=[...d.starred].filter(x=>!p.starred.has(x)); }
+    if(d.srs.size) patch.srs=Object.fromEntries([...d.srs].map(x=>[x,p.srs[x]]));
+    if(d.miss.size) patch.miss=Object.fromEntries([...d.miss].map(x=>[x,p.miss[x]||0]));
+    if(!own[sid]){ patch.title=s.title; patch.opened=Date.now(); }
+    store.saveProgress(sid,patch); };
   const deck={
     ids:sets.map(s=>s.id), sets, cards, progs, idsStr, starOnly:!!starOnly, q:starOnly?"/star":"",
     title: (idsStr==="all"?"Все наборы":sets.length===1?sets[0].title:plural(sets.length,"набор","набора","наборов"))+(starOnly?" · ★":""),
     back: sets.length===1&&idsStr!=="all"?`#/set/${sets[0].id}`:"#/",
     isKnown:c=>progs[c.sid].known.has(c.id),
-    setKnown(c,v){ v?progs[c.sid].known.add(c.id):progs[c.sid].known.delete(c.id); this.save(c.sid); },
+    setKnown(c,v){ v?progs[c.sid].known.add(c.id):progs[c.sid].known.delete(c.id); mark(c.sid,"known",c.id); this.save(c.sid); },
     srs:c=>progs[c.sid].srs[c.id],
-    setSrs(c,st){ progs[c.sid].srs[c.id]=st; this.save(c.sid); },
+    setSrs(c,st){ progs[c.sid].srs[c.id]=st; mark(c.sid,"srs",c.id); this.save(c.sid); },
     isStar:c=>progs[c.sid].starred.has(c.id),
-    toggleStar(c){ const st=progs[c.sid].starred, on=!st.has(c.id); on?st.add(c.id):st.delete(c.id); this.save(c.sid); return on; },
-    miss(c){ const m=progs[c.sid].miss; m[c.id]=(m[c.id]||0)+1; this.save(c.sid); },
+    toggleStar(c){ const st=progs[c.sid].starred, on=!st.has(c.id); on?st.add(c.id):st.delete(c.id); mark(c.sid,"starred",c.id); this.save(c.sid); return on; },
+    miss(c){ const m=progs[c.sid].miss; m[c.id]=(m[c.id]||0)+1; mark(c.sid,"miss",c.id); this.save(c.sid); },
+    unmiss(c){ const m=progs[c.sid].miss; if(m[c.id]){ m[c.id]--; mark(c.sid,"miss",c.id); this.save(c.sid); } },
     save(sid){ clearTimeout(timers[sid]); timers[sid]=setTimeout(()=>flush(sid),700); },
     flushAll(){ Object.keys(timers).forEach(flush); }
   };
@@ -629,7 +672,9 @@ function renderHeader(){
   if(store.demo) h.innerHTML=`${off}${st}<span class="badge">демо</span>`;
   else if(user) h.innerHTML=`${off}${st}<span class="who">${esc(user.email)}</span><button class="btn ghost small" id="out">Выйти</button>`;
   else h.innerHTML=`${off}<a class="btn small" href="#/login">Войти</a>`;
-  const o=$("#out"); if(o) o.onclick=async()=>{ await store.signOut(); setCache.clear(); location.hash="#/"; };
+  const o=$("#out"); if(o) o.onclick=async()=>{
+    if(cleanup){ try{ cleanup(); }catch{} cleanup=null; }   // дописываем прогресс и статистику, пока пользователь ещё вошёл
+    flushStats(); await store.signOut(); setCache.clear(); location.hash="#/"; };
 }
 window.addEventListener("online",()=>{ renderHeader(); toast("Снова онлайн - изменения синхронизируются"); });
 window.addEventListener("offline",()=>{ renderHeader(); toast("Нет интернета - можно заниматься дальше, прогресс сохранится позже"); });
@@ -643,28 +688,34 @@ const bindSeg=(obj,onChange)=>$$("[data-o]").forEach(b=>b.onclick=()=>{ const k=
 /* ---------- Маршруты ---------- */
 let routeId=0;
 const alive=()=>{ const r=routeId; return ()=>r===routeId; };   // отложенные действия выполняются, только если страница не сменилась
+let leaveGuard=null, curHash=location.hash;   // leaveGuard() -> true, если на странице есть несохранённые изменения
+window.addEventListener("beforeunload",e=>{ if(leaveGuard&&leaveGuard()){ e.preventDefault(); e.returnValue=""; } });
 async function route(){
+  if(leaveGuard&&location.hash!==curHash&&leaveGuard()&&!confirm("Изменения в наборе не сохранены. Уйти без сохранения?")){
+    history.replaceState(null,"",curHash||"#/"); return; }   // остаёмся в редакторе
+  leaveGuard=null; curHash=location.hash;
   routeId++;
   if(cleanup){ try{ cleanup(); }catch{} cleanup=null; }
-  const p=(location.hash.slice(1)||"/").split("/").filter(Boolean);
+  const p=(location.hash.slice(1)||"/").split("/").filter(Boolean), live=alive();
   window.scrollTo(0,0);
   try{
-    if(p[0]==="login") return viewLogin();
-    if(p[0]==="new") return needAuth()&&viewEditor(null);
-    if(p[0]==="edit") return needAuth()&&viewEditor(p[1]);
-    if(p[0]==="stats") return viewStats();
-    if(p[0]==="set"&&p[1]){ if(p[2]) return location.replace(`#/study/${p[1]}/${p[2]}`); return viewSet(p[1]); }
-    if(p[0]==="study"&&p[1]) return viewStudy(decodeURIComponent(p[1]), p[2]||"cards", p[3]==="star");
-    return viewHome();
+    if(p[0]==="login") return await viewLogin();
+    if(p[0]==="new") return needAuth()&&await viewEditor(null);
+    if(p[0]==="edit") return needAuth()&&await viewEditor(p[1]);
+    if(p[0]==="stats") return await viewStats();
+    if(p[0]==="set"&&p[1]){ if(p[2]) return location.replace(`#/study/${p[1]}/${p[2]}`); return await viewSet(p[1]); }
+    if(p[0]==="study"&&p[1]) return await viewStudy(decodeURIComponent(p[1]), p[2]||"cards", p[3]==="star");
+    return await viewHome();
   }catch(e){
     console.error(e);
-    app.innerHTML=`<div class="err">Ошибка: ${esc(e.message||e)}</div><p><a href="#/">На главную</a></p>`;
+    if(!live()) return;
+    app.innerHTML=`<div class="err">Не удалось открыть страницу: ${esc(e.message||e)}${navigator.onLine?"":". Нет интернета - попробуйте, когда связь появится"}</div><p><a href="#/">На главную</a></p>`;
   }
 }
 function needAuth(){ if(user) return true; afterLogin=location.hash; location.hash="#/login"; return false; }
 async function viewStudy(ids, mode, star){
-  loading();
-  const deck=await loadDeck(ids, star); if(!deck) return;
+  loading(); const lv=alive();
+  const deck=await loadDeck(ids, star); if(!lv()||!deck) return;
   const prev=cleanup;
   const run={cards:viewCards,test:viewTest,write:viewWrite,review:viewReview,listen:viewListen,speak:viewSpeak,match:viewMatch,tones:viewTones,exam:viewExam,endless:viewEndless}[mode]||viewCards;
   run(deck);
@@ -686,22 +737,24 @@ async function viewHome(){
     </div>${localSt.length?`<h2>Открытые по ссылке</h2><div class="grid">${localSt.map(studyCard).join("")}</div>`:""}`;
     bindRemove(); return;
   }
-  loading();
+  loading(); const lv=alive();
   const [mine,st,sh]=await Promise.all([mySetsC(),store.studying(),user&&!store.demo?sharedSetsC():[]]);
   const ids=new Set(mine.map(s=>s.id));
   const shared=sh.filter(s=>!ids.has(s.id)).sort((a,b)=>(a.folder||"").localeCompare(b.folder||"","ru")||a.title.localeCompare(b.title,"ru"));
   const shIds=new Set(shared.map(s=>s.id));
   const other=st.filter(s=>!ids.has(s.id)&&!shIds.has(s.id)&&s.title).sort((a,b)=>(b.opened||0)-(a.opened||0));
+  // наборы, открытые по ссылке: загружаем, чтобы не считать удалённые наборы и карточки; недоступные помечаем
+  const otherSets=(await Promise.all(other.map(s=>getSetC(s.id)))); other.forEach((s,k)=>{ s.gone=!otherSets[k]; });
+  if(!lv()) return;
+  const avail=otherSets.filter(Boolean);
   if(isAdmin()) mine.filter(s=>s.shared!==true).forEach(s=>store.saveSet(s).catch(()=>{}));   // старые наборы администратора делаем общими
   // к повторению сегодня: по прогрессу всех наборов
   const t=today(), stMap=Object.fromEntries(st.map(x=>[x.id,x]));
   let due=0;
-  [...mine,...shared].forEach(s=>{ const srs=stMap[s.id]?.srs||{}; s.cards.forEach(c=>{ if(srs[c.id]&&srs[c.id].due<=t) due++; }); });
-  other.forEach(s=>Object.values(s.srs||{}).forEach(x=>{ if(x.due<=t) due++; }));
+  [...mine,...shared,...avail].forEach(s=>{ const srs=stMap[s.id]?.srs||{}; s.cards.forEach(c=>{ if(srs[c.id]&&srs[c.id].due<=t) due++; }); });
   const anySrs=st.some(x=>x.srs&&Object.keys(x.srs).length);
   let stars=0;
-  [...mine,...shared].forEach(s=>{ const sr=new Set(stMap[s.id]?.starred||[]); s.cards.forEach(c=>{ if(sr.has(c.id)) stars++; }); });
-  other.forEach(s=>{ stars+=(s.starred||[]).length; });
+  [...mine,...shared,...avail].forEach(s=>{ const sr=new Set(stMap[s.id]?.starred||[]); s.cards.forEach(c=>{ if(sr.has(c.id)) stars++; }); });
   const sel=homeSel;
   // папки
   const groupsAll={};
@@ -742,7 +795,7 @@ async function viewHome(){
   const rsb=$("#rsb"); if(rsb){ rsb.onclick=()=>$("#rsf").click(); $("#rsf").onchange=e=>{ const f=e.target.files[0]; if(f) restoreBackup(f).catch(x=>toast("Ошибка: "+x.message)); }; }
 }
 const studyCard=s=>`<a class="panel setcard ${homeSel&&homeSel.has(s.id)?"sel":""}" href="#/set/${s.id}" data-id="${s.id}">${homeSel?`<span class="chk"></span>`:`<button class="x" data-rm="${s.id}" title="Убрать из списка">×</button>`}
-  <b>${esc(s.title||"Набор")}</b><span class="muted small">выучено ${(s.known||[]).length}</span></a>`;
+  <b>${esc(s.title||"Набор")}</b><span class="muted small">${s.gone?`<span class="badge warn">недоступен</span> автор удалил набор или закрыл ссылку`:`выучено ${(s.known||[]).length}`}</span></a>`;
 function bindRemove(){ $$("[data-rm]").forEach(b=>b.onclick=async e=>{ e.preventDefault(); e.stopPropagation(); await store.removeStudying(b.dataset.rm); route(); }); }
 
 /* ---------- Поиск по всем карточкам ---------- */
@@ -788,10 +841,11 @@ function viewLogin(){
 /* ---------- Редактор набора ---------- */
 async function viewEditor(id){
   let s={title:"",description:"",folder:"",lang:"auto",cards:[],public:false};
-  loading();
+  loading(); const lv=alive();
   const mine=await mySetsC();
-  if(id){ const x=await getSetC(id);
+  if(id){ const x=await getSetC(id); if(!lv()) return;
     if(!x||x.ownerId!==user.uid){ app.innerHTML=`<div class="err">Набор не найден или вы не его автор</div>`; return; } s={...s,...x}; }
+  if(!lv()) return;
   const folders=[...new Set(mine.map(x=>(x.folder||"").trim()).filter(Boolean))].sort();
   const cols0=hasPron(s.cards)?3:2;
   const useTab=s.cards.some(c=>/\s[-–—]\s|[–—]/.test(c.t+" "+(c.p||"")));
@@ -837,6 +891,8 @@ async function viewEditor(id){
     return {cards,bad};
   };
   $("#tx").oninput=upd; $("#sp").onchange=upd; upd();
+  const snap=()=>["#ti","#de","#fo","#lg","#tx","#sp"].map(x=>$(x).value).join("\u0001")+$("#pb").checked+cols;
+  const snap0=snap(); leaveGuard=()=>!!$("#tx")&&snap()!==snap0;
   $("#impb").onclick=()=>$("#impf").click();
   $("#impf").onchange=async ev=>{
     const f=ev.target.files[0]; if(!f) return; ev.target.value="";
@@ -863,16 +919,16 @@ async function viewEditor(id){
     if(!cards.length) return e.innerHTML=`<div class="err">Добавьте хотя бы одну карточку</div>`;
     if(cards.length>2000) return e.innerHTML=`<div class="err">Максимум 2000 карточек в наборе - разделите на несколько</div>`;
     $("#sv").disabled=true;
-    try{ const nid=await store.saveSet({...s,id,title,description:$("#de").value.trim(),folder:$("#fo").value.trim(),lang:$("#lg").value,cards,public:$("#pb").checked});
+    try{ leaveGuard=null; const nid=await store.saveSet({...s,id,title,description:$("#de").value.trim(),folder:$("#fo").value.trim(),lang:$("#lg").value,cards,public:$("#pb").checked});
       setCache.delete(nid); toast(navigator.onLine?"Сохранено":"Сохранено на устройстве - отправится, когда появится интернет"); location.hash="#/set/"+nid; }
-    catch(x){ $("#sv").disabled=false; e.innerHTML=`<div class="err">Не удалось сохранить: ${esc(x.message)}</div>`; }
+    catch(x){ $("#sv").disabled=false; leaveGuard=()=>!!$("#tx")&&snap()!==snap0; e.innerHTML=`<div class="err">Не удалось сохранить: ${esc(x.message)}</div>`; }
   };
 }
 
 /* ---------- Страница набора ---------- */
 async function viewSet(id){
-  loading();
-  const deck=await loadDeck(id); if(!deck) return;
+  loading(); const lv=alive();
+  const deck=await loadDeck(id); if(!lv()||!deck) return;
   const s=deck.sets[0], own=!!user&&s.ownerId===user.uid;
   const known=deck.cards.filter(deck.isKnown).length, N=s.cards.length;
   const di=dueInfo(deck.cards,deck.srs), stars=deck.cards.filter(deck.isStar).length;
@@ -949,8 +1005,8 @@ async function viewSet(id){
   };
   const cp=$("#cp"); if(cp) cp.onclick=async()=>{ cp.disabled=true;
     const nid=await store.saveSet({title:s.title,description:s.description,folder:"",lang:s.lang,cards:s.cards,public:false}); toast("Набор скопирован"); location.hash="#/set/"+nid; };
-  const rp=$("#rp"); if(rp) rp.onclick=async()=>{ if(!confirm("Сбросить весь прогресс по этому набору (отметки «знаю» и интервальное повторение)?")) return;
-    await store.resetProgress(id,{known:[],srs:{},miss:{},...(own?{}:{title:s.title,opened:Date.now()})}); route(); };
+  const rp=$("#rp"); if(rp) rp.onclick=async()=>{ if(!confirm("Сбросить прогресс по этому набору (отметки «знаю», интервальное повторение и счётчик ошибок)? Звёздочки останутся.")) return;
+    deck.flushAll(); await store.resetProgress(id,{known:[],srs:{},miss:{},starred:[...deck.progs[id].starred],...(own?{}:{title:s.title,opened:Date.now()})}); route(); };
   const dl=$("#dl"); if(dl) dl.onclick=async()=>{ if(!confirm(`Удалить набор «${s.title}»? Это нельзя отменить.`)) return; await store.deleteSet(id); setCache.delete(id); toast("Набор удалён"); location.hash="#/"; };
 }
 
@@ -1095,6 +1151,8 @@ const QT={
   wdt:{name:"Ввод: термин",need:()=>true},
   wtd:{name:"Ввод: перевод",need:()=>true}
 };
+const Q_FIELD={td:"d",dt:"t",tp:"p",lt:"t",ld:"d"};
+const enoughOpts=(deck,t)=>!Q_FIELD[t]||new Set(deck.cards.map(c=>c[Q_FIELD[t]]).filter(Boolean)).size>=2;
 const fieldHtml=(f,v)=>f==="p"?toneHtml(v):f==="t"?`<span class="${[...v].length<=3?"big-opt":""}">${esc(v)}</span>`:esc(v);
 function makeQ(type,c,deck,o={}){
   const ex=!!o.exam, showPron=ex?false:settings.showPron, sayAsk=ex?true:settings.sayAsk;
@@ -1116,11 +1174,14 @@ function makeQ(type,c,deck,o={}){
   const dir={wtp:"tp",wdt:"dt",wtd:"td"}[type], ans=dir==="tp"?c.p:dir==="dt"?c.t:c.d;
   return {type,kind:"write",card:c,dir,head:dir==="dt"?"Определение":"Термин",prompt:{tp:"Напишите произношение",dt:"Напишите термин",td:"Напишите перевод"}[dir],
     askHtml:dir==="dt"?esc(c.d):term(dir==="td"&&showPron),ans,ansHtml:dir==="tp"?toneHtml(ans):esc(ans),
-    placeholder:{tp:"например ding1 или dīng",dt:"термин",td:"перевод"}[dir],
+    placeholder:{tp:isPinyin(ans||"")?"например ding1 или dīng":"произношение",dt:"термин",td:"перевод"}[dir],
     say:dir==="td"?(sayAsk?"ask":"after"):(ex?"none":"after")};
 }
 function checkWrite(q,given,tonesReq){
   if(!String(given).trim()) return {ok:false,note:""};
+  if(q.dir==="tp"&&!isPinyin(q.ans)){   // транскрипция вроде [ˈæpəl] - сравниваем как текст, без скобок и знаков ударения
+    const clean=v=>String(v).replace(/[\[\]\/ˈˌ]/g," ");
+    const m=answerMatches(clean(given),clean(q.ans)); return {ok:!!m,note:m==="typo"?"Засчитано с опечаткой.":""}; }
   if(q.dir==="tp"){ const a0=pinyinKey(given,false), b0=pinyinKey(q.ans,false);
     const ok=tonesReq?pinyinKey(given,true)===pinyinKey(q.ans,true):a0===b0;
     return {ok, note:!ok&&a0&&a0===b0?"Слоги верные, но тоны другие.":""}; }
@@ -1182,7 +1243,7 @@ function runQuiz(deck,cfg){
       <div class="reveal-card"><span class="rv-t">${esc(c.t)}</span>${c.p?` <span class="rv-p">${toneHtml(c.p)}</span>`:""} - ${esc(c.d)}</div></div>`;
     $("#nxw").innerHTML=`<button class="btn primary" id="nx">Далее</button>${!ok&&given&&q.kind==="write"?`<button class="btn ghost" id="ovr">Я ответил верно - засчитать</button>`:""}`;
     $("#nx").onclick=next; try{ $("#nx").focus({preventScroll:true}); }catch{}
-    const ov=$("#ovr"); if(ov) ov.onclick=()=>{ wrong.pop(); right++; entry.ok=true; const m=deck.progs[c.sid].miss; if(m[c.id]) m[c.id]--; sfx(true); next(); };
+    const ov=$("#ovr"); if(ov) ov.onclick=()=>{ wrong.pop(); right++; entry.ok=true; deck.unmiss(c); recordAnswer(true,true); sfx(true); next(); };
     if(q.say!=="listen"&&q.say!=="none") autoSay(c);
   }
   function next(){ if(!answered) return; i++; show(); }
@@ -1280,7 +1341,7 @@ function viewTones(deck){
 function viewExam(deck){
   if(deck.cards.length<2) return needTwo(deck);
   const opt={n:"20",match:true,...LS.get("kartochki_exam_opts",{})};
-  const types=Object.keys(QT).filter(t=>deck.cards.some(QT[t].need));
+  const types=Object.keys(QT).filter(t=>deck.cards.some(QT[t].need)&&enoughOpts(deck,t));
   const seenT=new Set(), seenD=new Set(), uniq=deck.cards.filter(c=>{ if(seenT.has(c.t)||seenD.has(c.d)) return false; seenT.add(c.t); seenD.add(c.d); return true; });
   const maxN=types.reduce((a,t)=>a+deck.cards.filter(QT[t].need).length,0);
   const setup=()=>{
@@ -1329,7 +1390,7 @@ function viewExam(deck){
 function viewEndless(deck){
   if(deck.cards.length<2) return needTwo(deck);
   const groups=[["test","Тест",["td","dt","tp"]],["write","Ввод",["wtp","wdt","wtd"]],["listen","Аудирование",["lt","ld"]],["tones","Тоны",["tone"]]]
-    .map(([k,l,ts])=>[k,l,ts.filter(t=>deck.cards.some(QT[t].need))]).filter(g=>g[2].length);
+    .map(([k,l,ts])=>[k,l,ts.filter(t=>deck.cards.some(QT[t].need)&&enoughOpts(deck,t))]).filter(g=>g[2].length);
   const opt={sel:["test"],...LS.get("kartochki_endless_opts",{})};
   opt.sel=opt.sel.filter(k=>groups.some(g=>g[0]===k)); if(!opt.sel.length) opt.sel=[groups[0][0]];
   const setup=()=>{
@@ -1375,9 +1436,10 @@ function viewReview(deck){
       <div class="panel">
         <p style="margin-top:0">К повторению сегодня: <b>${due.length}</b>${fresh.length?` · новых карточек: <b>${fresh.length}</b>`:""}</p>
         ${fresh.length?`<label>Сколько новых добавить</label>${seg({n:String(newCount)},"n",[...[0,5,10,20].filter(v=>v<fresh.length).map(v=>[String(v),String(v)]),[String(fresh.length),"Все ("+fresh.length+")"]])}`:""}
+        <label>Что показывать сначала</label>${seg(settings,"revFront",[["t","Термин"],["d","Определение"]])}
         <p class="muted small">Сайт показывает карточку в тот день, когда вы вот-вот её забудете: трудные - чаще, лёгкие - через всё более длинные промежутки. Достаточно заниматься понемногу каждый день.</p>
         <button class="btn primary" id="go" ${due.length+newCount?"":"disabled"}>Начать (${due.length+newCount})</button></div>`;
-    $$("[data-o]").forEach(b=>b.onclick=()=>{ newCount=+b.dataset.v; intro(); });
+    $$("[data-o]").forEach(b=>b.onclick=()=>{ if(b.dataset.o==="n") newCount=+b.dataset.v; else { settings[b.dataset.o]=b.dataset.v; saveSettings(); } intro(); });
     $("#go").onclick=()=>{ queue=[...shuffle(due),...shuffle(fresh).slice(0,newCount)]; started=true; show(); };
     if(!due.length&&!fresh.length) nextDate();
   }
@@ -1389,18 +1451,19 @@ function viewReview(deck){
   function show(){
     if(!queue.length) return finish();
     shown=false; const c=queue[0], st=deck.srs(c);
-    const front=`<div><div${termCls(c.t)}>${esc(c.t)}</div>${settings.pron==="front"?pronHtml(c):""}</div>`;
+    const rev=settings.revFront==="d";   // сначала определение - вспоминаем термин
+    const front=rev?`<div>${esc(c.d)}</div>`:`<div><div${termCls(c.t)}>${esc(c.t)}</div>${settings.pron==="front"?pronHtml(c):""}</div>`;
     if(settings.decomp&&!HANZI&&hasCJK([c])) { const lv=alive(); loadHanzi().then(()=>{ if(lv()&&queue[0]===c&&!shown) show(); }); }
     const back=`<div><div style="font-size:${[...c.t].length<=3?"1.8em":".8em"}">${esc(c.t)}</div>${c.p?`<div class="pron" style="margin:4px 0 14px">${toneHtml(c.p)}</div>`:`<div style="height:12px"></div>`}<div>${esc(c.d)}</div>${noteHtml(c)}${decompHtml(c,deck)}</div>`;
     app.innerHTML=`<div class="study-top"><a class="small" href="${deck.back}">← ${esc(deck.title)}</a><span class="row" style="gap:4px">${starHtml(deck.isStar(c))}<span class="muted small">осталось ${queue.length}${st?"":" · новая"}</span></span></div>
       <div class="flip noanim" id="card"><div class="inner">
-        <div class="face front"><span class="hint">${st?"Вспомните ответ":"Новая карточка"}</span>${spkBtn(c)}${front}</div>
+        <div class="face front"><span class="hint">${st?(rev?"Вспомните термин":"Вспомните ответ"):"Новая карточка"}</span>${rev?"":spkBtn(c)}${front}</div>
         <div class="face back"><span class="hint">Ответ</span>${spkBtn(c)}${back}</div></div></div>
       <div id="ctl"><button class="btn primary" id="sh" style="width:100%;margin-top:14px">Показать ответ</button></div>
       <p class="center muted small" style="margin:8px 0 0">${matchMedia("(hover:none)").matches?"Нажмите на карточку или кнопку":"Пробел - показать ответ, 1-4 - оценка, S - озвучить"}</p>
       ${hasCJK(deck.cards)?`<div class="opts-row"><span><span class="small muted">Разбор:</span>${seg(settings,"decomp",[[false,"Выкл"],[true,"Вкл"]])}</span></div>`:""}`;
     requestAnimationFrame(()=>$("#card")?.classList.remove("noanim"));
-    autoSay(c);
+    if(!rev) autoSay(c);
     wireStar($(".study-top .starb"),deck,c);
     bindSeg(settings,()=>{ saveSettings(); const was=shown; show(); if(was) reveal(); });
     $("#card").onclick=reveal; $("#sh").onclick=reveal;
@@ -1408,6 +1471,7 @@ function viewReview(deck){
   function reveal(){
     if(shown) return; shown=true; const c=queue[0], st=deck.srs(c);
     $("#card").classList.add("flipped");
+    if(settings.revFront==="d") autoSay(c);
     const g=[0,1,2,3].map(k=>k===0?"сейчас":ivLabel(nextSrs(st,k).int));
     $("#ctl").innerHTML=`<div class="grades">
       <button class="btn dont" data-g="0">Не помню<small>${g[0]}</small></button><button class="btn hard" data-g="1">Трудно<small>${g[1]}</small></button>
@@ -1555,10 +1619,11 @@ function viewMatch(deck){
 /* ---------- Статистика ---------- */
 async function viewStats(){
   if(!user) return needAuth();
-  loading(); flushStats();
+  loading(); flushStats(); const lv=alive();
   const [mine,st]=await Promise.all([mySetsC(),store.studying()]);
   const ids=new Set(mine.map(s=>s.id));
   const others=(await Promise.all(st.filter(x=>!ids.has(x.id)).map(x=>getSetC(x.id)))).filter(Boolean);
+  if(!lv()) return;
   const pm=Object.fromEntries(st.map(x=>[x.id,x])), t=today();
   let total=0, known=0, long=0, due=0, inSrs=0; const hard=[];
   for(const s of [...mine,...others]){ const p=pm[s.id]||{}, kn=new Set(p.known||[]), srs=p.srs||{}, miss=p.miss||{};
@@ -1583,7 +1648,23 @@ async function viewStats(){
     <h2>Самые трудные карточки</h2>
     ${hard.length?`<div class="panel" style="padding:4px 8px"><table>${hard.slice(0,15).map(h=>`<tr><td>${esc(h.c.t)}${pronHtml(h.c)}</td><td>${esc(h.c.d)}<br><span class="muted small">${esc(h.s.title)} · ошибок: ${h.n}</span></td></tr>`).join("")}</table></div>`
       :`<div class="panel muted">Пока нет ошибок - или вы ещё не занимались.</div>`}
-    <p class="muted small">Учтены ${plural(inSrs,"карточка","карточки","карточек")} в интервальном повторении. Статистика ответов собирается с этого обновления.</p>`;
+    <p class="muted small">Учтены ${plural(inSrs,"карточка","карточки","карточек")} в интервальном повторении.</p>`;
+}
+
+/* Прогресс, накопленный без входа (наборы по ссылке), переносим в аккаунт */
+async function moveGuestProgress(){
+  const list=localProg.list(); if(!list.length) return;
+  for(const lp of list){
+    try{
+      const sp=await store.getProgress(lp.id), ssrs=sp.srs||{}, smiss=sp.miss||{}, sk=new Set(sp.known||[]), ss=new Set(sp.starred||[]);
+      const patch={knownAdd:(lp.known||[]).filter(x=>!sk.has(x)), starAdd:(lp.starred||[]).filter(x=>!ss.has(x)), srs:{}, miss:{}};
+      for(const [k,v] of Object.entries(lp.srs||{})) if(!ssrs[k]||(v.reps||0)>(ssrs[k].reps||0)) patch.srs[k]=v;
+      for(const [k,v] of Object.entries(lp.miss||{})) if(v>(smiss[k]||0)) patch.miss[k]=v;
+      if(lp.title) patch.title=lp.title; patch.opened=lp.opened||Date.now();
+      store.saveProgress(lp.id,patch); localProg.remove(lp.id);
+    }catch(e){ console.error(e); }
+  }
+  toast("Прогресс по открытым наборам перенесён в ваш аккаунт");
 }
 
 /* ---------- Запуск ---------- */
@@ -1593,8 +1674,13 @@ window.addEventListener("pagehide",()=>{ try{ flushStats(); }catch{} });
 (async()=>{
   try{ store=/^AIza/.test(firebaseConfig.apiKey)&&firebaseConfig.projectId?await firebaseStore(firebaseConfig):demoStore(); }
   catch(e){ app.innerHTML=`<div class="err">Не удалось подключиться к Firebase: ${esc(e.message)}. Проверьте настройки в начале файла и интернет.</div>`; return; }
+  let lastUid;
   store.onAuth(async u=>{ user=u; setCache.clear(); renderHeader();
-    try{ const s=await store.getStats(); stats={days:{...(s.days||{}),...stats.days}}; }catch{}
+    if((u&&u.uid)!==lastUid){ lastUid=u&&u.uid; statsPend={}; }   // другой пользователь - его статистика начинается заново
+    stats={days:{}};
+    try{ const s=await store.getStats(); stats={days:{...(s.days||{})}}; }catch{}
+    for(const [d,v] of Object.entries(statsPend)) bumpDay(stats.days,d,v.n,v.ok);   // ответы, ещё не дошедшие до сервера
+    if(u&&!store.demo) await moveGuestProgress();
     route(); });
 })();
 </script>
