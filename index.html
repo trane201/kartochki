@@ -80,6 +80,7 @@ td.n{width:36px;color:var(--muted);font-weight:400}
   border-radius:18px;box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;text-align:center;padding:28px;
   font-size:clamp(20px,4.6vw,30px);overflow:auto;word-break:break-word}
 .face.back{transform:rotateY(180deg)}
+.big{font-size:2.6em;line-height:1.15}
 .pron{font-size:.62em;color:var(--muted);margin-top:8px;font-style:italic}
 td .pron{font-size:13px;margin-top:2px}
 .face .hint{position:absolute;top:12px;left:16px;font-size:13px;color:var(--muted)}
@@ -230,15 +231,26 @@ async function firebaseStore(cfg){
 }
 
 /* ---------- Разбор вставленного списка ---------- */
-const SEP_RE={tab:/\t+/, dash:/\s+[-–—]\s+|[–—]/, semicolon:/\s*;\s*/, colon:/\s*:\s*/, comma:/\s*,\s*/};
+const SEP_RE={tab:/\t+/, eq:/\s*=\s*/, dash:/\s+[-–—]\s+|[–—]/, semicolon:/\s*;\s*/, colon:/\s*:\s*/, comma:/\s*,\s*/};
 function splitN(line, re, n){
   const parts=[]; let rest=line;
   while(parts.length<n-1){ const m=rest.match(re); if(!m) break; parts.push(rest.slice(0,m.index)); rest=rest.slice(m.index+m[0].length); }
   parts.push(rest); return parts;
 }
 function splitLine(line, sep, n){
-  for(const k of (sep==="auto"?["tab","dash","semicolon","colon"]:[sep])) if(SEP_RE[k].test(line)) return splitN(line,SEP_RE[k],n);
-  return null;
+  if(sep!=="auto") return SEP_RE[sep].test(line)?splitN(line,SEP_RE[sep],n):null;
+  // авто: на каждом шаге берём самый ранний из основных разделителей (табуляция, =, тире),
+  // поэтому подходят и смешанные строки вида «丁=dīng — гвоздь»; ; и : - только если основных нет
+  const parts=[]; let rest=line;
+  while(parts.length<n-1){
+    let best=null;
+    for(const re of [SEP_RE.tab,SEP_RE.eq,SEP_RE.dash]){ const m=rest.match(re); if(m&&(!best||m.index<best.index)) best=m; }
+    if(!best&&!parts.length) for(const re of [SEP_RE.semicolon,SEP_RE.colon]){ const m=rest.match(re); if(m){ best=m; break; } }
+    if(!best) break;
+    parts.push(rest.slice(0,best.index)); rest=rest.slice(best.index+best[0].length);
+  }
+  parts.push(rest);
+  return parts.length>1?parts:null;
 }
 /* cols=2: термин | определение; cols=3: термин | произношение | определение
    (строка только из двух частей в режиме 3 тоже принимается - без произношения) */
@@ -254,6 +266,7 @@ function parseCards(text, sep, cols){
   return {cards,bad};
 }
 const hasPron=cards=>cards.some(c=>c.p);
+const termCls=t=>[...t].length<=3?' class="big"':"";
 const pronHtml=c=>c.p?`<div class="pron">${esc(c.p)}</div>`:"";
 
 /* ---------- Шапка ---------- */
@@ -360,7 +373,7 @@ async function viewEditor(id){
     <textarea id="tx" placeholder="apple - яблоко&#10;dog - собака&#10;house - дом">${esc(text)}</textarea>
     <div class="row" style="margin-top:10px"><span class="small muted">Разделитель:</span>
       <select id="sp" style="width:auto"><option value="auto">Определить автоматически</option><option value="tab">Табуляция (Excel, Quizlet)</option>
-      <option value="dash">Тире  -  или  —</option><option value="semicolon">Точка с запятой ;</option><option value="colon">Двоеточие :</option><option value="comma">Запятая ,</option></select></div>
+      <option value="dash">Тире  -  или  —</option><option value="eq">Знак =</option><option value="semicolon">Точка с запятой ;</option><option value="colon">Двоеточие :</option><option value="comma">Запятая ,</option></select></div>
     <label class="check"><input type="checkbox" id="pb" ${s.public?"checked":""}><span>Доступ по ссылке<br><span class="muted small">Любой, у кого есть ссылка, сможет учить этот набор. Изменять его можете только вы.</span></span></label>
   </div>
   <h2 id="ph">Предпросмотр</h2><div id="pv"></div>
@@ -368,7 +381,7 @@ async function viewEditor(id){
   if(useTab) $("#sp").value="tab";
   let cols=cols0;
   const setCols=c=>{ cols=c; $$("#cols button").forEach(b=>b.classList.toggle("on",+b.dataset.c===c));
-    $("#fh").innerHTML=c===3?"Например: <code>apple - [ˈæpəl] - яблоко</code>. Произношение необязательно: строки вида <code>термин - определение</code> тоже подойдут. Из Excel - три столбца.":"Например: <code>apple - яблоко</code>. Подходит и список из Excel или экспорт из Quizlet (через табуляцию).";
+    $("#fh").innerHTML=c===3?"Например: <code>apple - [ˈæpəl] - яблоко</code>. Подходит и <code>丁=dīng — гвоздь</code>. Произношение необязательно: строки вида <code>термин - определение</code> тоже подойдут. Из Excel - три столбца.":"Например: <code>apple - яблоко</code>. Подходит и список из Excel или экспорт из Quizlet (через табуляцию).";
     $("#tx").placeholder=c===3?"apple - [ˈæpəl] - яблоко\ndog - [dɒɡ] - собака\nhouse - [haʊs] - дом":"apple - яблоко\ndog - собака\nhouse - дом"; };
   $$("#cols button").forEach(b=>b.onclick=()=>{ setCols(+b.dataset.c); upd(); });
   setCols(cols);
@@ -454,7 +467,7 @@ async function viewCards(id){
   const seg=(key,vals)=>`<span class="seg">${vals.map(([v,l])=>`<button data-o="${key}" data-v="${v}" class="${String(opt[key])===String(v)?"on":""}">${l}</button>`).join("")}</span>`;
   function render(){
     if(i>=order.length) return renderEnd();
-    const c=order[i], term=`<div>${esc(c.t)}</div>`, def=`<div>${esc(c.d)}</div>`;
+    const c=order[i], term=`<div${termCls(c.t)}>${esc(c.t)}</div>`, def=`<div>${esc(c.d)}</div>`;
     const F=opt.front==="t"
       ? [term+(opt.pron==="front"?pronHtml(c):""), (opt.pron==="back"&&c.p?`<div class="pron" style="margin:0 0 12px">${esc(c.p)}</div>`:"")+def, "Термин", c.p&&opt.pron==="back"?"Произношение и определение":"Определение"]
       : [def, term+pronHtml(c), "Определение", "Термин"];
@@ -539,7 +552,7 @@ async function viewTest(id){
       const field=dir==="td"?"d":dir==="dt"?"t":"p", ask=dir==="dt"?c.d:c.t, ans=c[field];
       const pool=[...new Set(s.cards.map(x=>x[field]).filter(Boolean))].filter(x=>x!==ans);
       // термин в вопросе показываем с произношением (кроме вопроса о самом произношении)
-      const askHtml=esc(ask)+(dir==="td"?pronHtml(c):"");
+      const askHtml=(dir==="dt"?esc(ask):`<div${termCls(ask)}>${esc(ask)}</div>`)+(dir==="td"?pronHtml(c):"");
       // варианты-термины показываем с произношением
       const optHtml=o=>{ if(dir!=="dt") return esc(o); const pc=s.cards.find(x=>x.t===o&&x.p); return esc(o)+(pc?` <span class="muted small">${esc(pc.p)}</span>`:""); };
       return {card:c,dir,ask,askHtml,ans,optHtml,options:shuffle([ans,...shuffle(pool).slice(0,3)])};
