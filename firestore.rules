@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Card sets: owner always; others only if "public" (shared by link or admin's shared sets)
+    match /sets/{setId} {
+      allow read: if resource.data.public == true
+                  || (request.auth != null && request.auth.uid == resource.data.ownerId);
+      allow create: if request.auth != null
+                    && request.resource.data.ownerId == request.auth.uid
+                    && validSet(request.resource.data);
+      allow update: if request.auth != null
+                    && request.auth.uid == resource.data.ownerId
+                    && request.resource.data.ownerId == resource.data.ownerId
+                    && validSet(request.resource.data);
+      allow delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
+    }
+
+    // Personal progress and stats: only the user themself
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Only the admin can publish sets for everyone ("shared")
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'trane201@mail.ru';
+    }
+
+    function validSet(d) {
+      return d.title is string && d.title.size() > 0 && d.title.size() <= 200
+          && d.cards is list && d.cards.size() <= 2000
+          && d.public is bool
+          && (!('shared' in d) || d.shared == false || isAdmin());
+    }
+  }
+}

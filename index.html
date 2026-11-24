@@ -216,22 +216,10 @@ tr.dec-row .decomp{margin-top:0}
 <main id="app"><div class="spin">Загрузка…</div></main>
 <div id="toast"></div>
 
+<!-- Настройки Firebase лежат в config.js (window.FIREBASE_CONFIG). Если файла нет - сайт работает в демо-режиме. -->
+<script src="config.js"></script>
 <script type="module">
-/* =====================================================================
-   НАСТРОЙКА. Вставьте сюда данные своего проекта Firebase
-   (Firebase Console → Project settings → Your apps → Web app → Config).
-   Пока поля пустые, сайт работает в демо-режиме: данные хранятся
-   только в текущем браузере.
-   ===================================================================== */
-const firebaseConfig = {
-  apiKey: "AIzaSyCiewNRPvmmpqaKy4s3665Ob1iYhs7xUmI",
-  authDomain: "kartochki-e43c9.firebaseapp.com",
-  projectId: "kartochki-e43c9",
-  storageBucket: "kartochki-e43c9.firebasestorage.app",
-  messagingSenderId: "255291311438",
-  appId: "1:255291311438:web:711dbbec8a482d652c8a1f"
-};
-/* ===================================================================== */
+const firebaseConfig = window.FIREBASE_CONFIG || {};
 
 const FB_VERSION = "10.12.2";
 const ADMIN_EMAIL = "trane201@mail.ru";   // наборы этого пользователя видны всем ("Общие наборы")
