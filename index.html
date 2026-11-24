@@ -98,7 +98,12 @@ td .pron{font-size:13px;margin-top:2px}
 .face .hint{position:absolute;top:12px;left:16px;font-size:13px;color:var(--muted)}
 .flip.swl .face{border-color:var(--bad)} .flip.swr .face{border-color:var(--ok)}
 .spk{position:absolute;top:8px;right:8px;width:44px;height:44px;border-radius:50%;border:0;background:var(--accent-soft);color:var(--accent);
-  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;z-index:2}
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background .2s,color .2s}
+.spk.playing{background:var(--accent);color:#fff;animation:spkpulse 1s ease-in-out infinite}
+@keyframes spkpulse{0%,100%{box-shadow:0 0 0 0 rgba(66,85,255,.45)}50%{box-shadow:0 0 0 8px rgba(66,85,255,0)}}
+/* iPhone (Safari) показывает элементы обратной стороны сквозь карточку - прячем значок на невидимой стороне в середине поворота */
+.face .spk,.face .hint{-webkit-backface-visibility:hidden;backface-visibility:hidden;transition:visibility 0s .2s,background .2s,color .2s}
+.flip.flipped .face.front .spk,.flip.flipped .face.front .hint,.flip:not(.flipped) .face.back .spk,.flip:not(.flipped) .face.back .hint{visibility:hidden}
 .spk.inline{position:static;width:36px;height:36px;vertical-align:middle;margin-left:6px}
 .study-btns{display:grid;grid-template-columns:auto 1fr 1fr auto;gap:10px;margin-top:14px}
 .btn.know{background:var(--ok-soft);color:var(--ok);border-color:transparent}
@@ -251,11 +256,21 @@ function langFor(text, setLang){
   if(/[а-яё]/i.test(text)) return "ru-RU";
   return "en-US";
 }
+/* подсветка значка на время воспроизведения */
+let playTimer=null;
+function setPlaying(text){
+  clearTimeout(playTimer);
+  $$(".spk.playing").forEach(b=>b.classList.remove("playing"));
+  if(text){ $$(".spk").forEach(b=>{ if(b.dataset.say===text) b.classList.add("playing"); });
+    playTimer=setTimeout(()=>setPlaying(null),Math.min(15000,1500+text.length*400)); }   // страховка, если браузер не сообщит о конце
+}
 function speak(text, lang){
   if(!canSpeak||!text||lang==="off") return;
   try{
     speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance(text); u.lang=lang; u.rate=lang.startsWith("zh")?0.8:0.95;
+    const id=speak.id=(speak.id||0)+1; setPlaying(text);
+    u.onend=u.onerror=()=>{ if(speak.id===id) setPlaying(null); };
     const vs=speechSynthesis.getVoices(), L=lang.toLowerCase();
     const v=vs.find(v=>v.lang.replace("_","-").toLowerCase()===L)||vs.find(v=>v.lang.toLowerCase().startsWith(L.slice(0,2)));
     if(v) u.voice=v;
@@ -719,8 +734,8 @@ function viewCards(deck){
     if(i>=order.length) return renderEnd();
     const c=order[i], term=`<div><div${termCls(c.t)}>${esc(c.t)}</div>`, def=`<div>${esc(c.d)}</div>`;
     const F=opt.front==="t"
-      ? [term+(opt.pron==="front"?pronHtml(c):"")+`</div>`, (opt.pron==="back"&&c.p?`<div class="pron" style="margin:0 0 12px">${toneHtml(c.p)}</div>`:"")+def, "Термин", c.p&&opt.pron==="back"?"Произношение и определение":"Определение", spkBtn(c), ""]
-      : [def, term+pronHtml(c)+`</div>`, "Определение", "Термин", "", spkBtn(c)];
+      ? [term+(opt.pron==="front"?pronHtml(c):"")+`</div>`, (opt.pron==="back"&&c.p?`<div class="pron" style="margin:0 0 12px">${toneHtml(c.p)}</div>`:"")+def, "Термин", c.p&&opt.pron==="back"?"Произношение и определение":"Определение", spkBtn(c), spkBtn(c)]
+      : [def, term+pronHtml(c)+`</div>`, "Определение", "Термин", spkBtn(c), spkBtn(c)];
     app.innerHTML=`<div class="study-top"><a class="small" href="${deck.back}">← ${esc(deck.title)}</a><span class="muted small">${i+1} / ${order.length}</span></div>
       <div class="flip noanim ${flipped?"flipped":""}" id="card"><div class="inner">
         <div class="face front"><span class="hint">${F[2]}${deck.isKnown(c)?" · знаю":""}</span>${F[4]}<div>${F[0]}</div></div>
