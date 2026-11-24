@@ -49,7 +49,8 @@ async def run(browser, name, viewport, mobile):
     await pg.add_init_script(STUB)
     pg.on("pageerror", lambda e: errs.append(str(e)))
     pg.on("console", lambda m: m.type == "error" and errs.append(m.text))
-    pg.on("dialog", lambda d: asyncio.ensure_future(d.accept()))
+    dlg = {"dismiss": False}   # True - следующий диалог отклонить («Отмена»)
+    pg.on("dialog", lambda d: asyncio.ensure_future(d.dismiss() if dlg["dismiss"] else d.accept()))
     overflow = "document.documentElement.scrollWidth>window.innerWidth+1"
 
     await pg.goto(URL + "#/new"); await pg.wait_for_timeout(400)
@@ -102,6 +103,55 @@ async def run(browser, name, viewport, mobile):
     await pg.goto(URL + f"#/set/{sid}"); await pg.wait_for_timeout(400)
     await pg.goto(URL + f"#/edit/{sid}"); await pg.wait_for_timeout(400)
     check("上海 - Шанхай" in await pg.input_value("#tx"), f"[{name}] заметка сохраняется и возвращается в редактор")
+
+    # редактор предупреждает о несохранённых изменениях
+    await pg.fill("#ti", "Тест изменён")
+    dlg["dismiss"] = True
+    await pg.evaluate("location.hash='#/'"); await pg.wait_for_timeout(300)
+    dlg["dismiss"] = False
+    check(await pg.query_selector("#tx") is not None and "edit" in await pg.evaluate("location.hash"), f"[{name}] редактор не закрывается без подтверждения, если есть изменения")
+    await pg.goto(URL + "#/"); await pg.wait_for_timeout(300)   # теперь подтверждаем уход
+
+    prog = f"JSON.parse(localStorage.getItem('kartochki_progress_v1')||'{{}}')['{sid}']||{{}}"
+    # звёздочка и «знаю» сохраняются изменениями, сброс прогресса звёздочки не трогает
+    await pg.goto(URL + f"#/set/{sid}"); await pg.wait_for_timeout(400)
+    if not await pg.query_selector("#ctab .starb.on"):
+        await pg.click("#ctab .starb >> nth=0"); await pg.wait_for_timeout(900)
+    stars = len((await pg.evaluate(prog)).get("starred", []))
+    check(stars >= 1, f"[{name}] звёздочка сохраняется")
+    await pg.goto(URL + "#/"); await pg.goto(URL + f"#/set/{sid}"); await pg.wait_for_timeout(400)
+    if await pg.query_selector("#rp"):
+        await pg.click("#rp"); await pg.wait_for_timeout(500)
+        p = await pg.evaluate(prog)
+        check(len(p.get("starred", [])) == stars and not p.get("known"), f"[{name}] «Сбросить прогресс» сбрасывает «знаю», но оставляет звёздочки")
+
+    # повторение: можно начинать с определения
+    await pg.goto(URL + "#/"); await pg.goto(URL + f"#/study/{sid}/review"); await pg.wait_for_timeout(400)
+    await pg.click("[data-o='revFront'][data-v='d']"); await pg.wait_for_timeout(200)
+    await pg.click("#go"); await pg.wait_for_timeout(300)
+    front = await pg.inner_text(".face.front")
+    check(any(d in front for d in ["гвоздь","земля","работа","подниматься","государь","человек","большой","Китай","учитель"]), f"[{name}] повторение: сначала определение")
+    await pg.evaluate("localStorage.setItem('kartochki_settings', JSON.stringify({...JSON.parse(localStorage.getItem('kartochki_settings')||'{}'), revFront:'t'}))")
+
+    # ввод произношения не пиньинем (транскрипция): ерунда не засчитывается, правильный ответ - да
+    await pg.goto(URL + "#/new"); await pg.wait_for_timeout(400)
+    await pg.fill("#ti", "EN"); await pg.click("#cols button[data-c='3']")
+    await pg.fill("#tx", "apple\t[ˈæpəl]\tяблоко\ndog\t[dɒɡ]\tсобака"); await pg.click("#sv"); await pg.wait_for_timeout(500)
+    sid_en = (await pg.evaluate("location.hash")).split("/")[2]
+    await pg.evaluate("localStorage.setItem('kartochki_write_opts2', JSON.stringify({n:'all',dir:'wtp',tonesReq:true}))")
+    await pg.goto(URL + "#/"); await pg.goto(URL + f"#/study/{sid_en}/write"); await pg.wait_for_timeout(400)
+    await pg.click("#go"); await pg.wait_for_timeout(300)
+    await pg.fill("#ans", "абракадабра"); await pg.click("#chk"); await pg.wait_for_timeout(200)
+    check("wrong" in await pg.evaluate("document.querySelector('#qp').className"), f"[{name}] транскрипция: неверный ответ не засчитывается")
+    await pg.click("#nx"); await pg.wait_for_timeout(200)
+    ans = "ˈæpəl" if "apple" in await pg.inner_text("#qp") else "dɒɡ"
+    await pg.fill("#ans", ans); await pg.click("#chk"); await pg.wait_for_timeout(200)
+    check("right" in await pg.evaluate("document.querySelector('#qp').className"), f"[{name}] транскрипция: верный ответ засчитывается")
+
+    # статистика прибавляется, а не перезаписывается
+    await pg.wait_for_timeout(2300)
+    st = await pg.evaluate("Object.values(JSON.parse(localStorage.getItem('kartochki_stats_v1')||'{\"days\":{}}').days).reduce((a,d)=>a+d.n,0)")
+    check(st >= 10, f"[{name}] статистика копит ответы ({st})")
     check(not errs, f"[{name}] нет ошибок JavaScript: {errs[:3]}")
     await ctx.close()
 
