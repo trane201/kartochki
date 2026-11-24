@@ -1539,19 +1539,32 @@ function viewSpeak(deck){
       <div class="center" style="margin-top:16px"><button class="mic" id="mic" aria-label="Говорить">${MIC_SVG}</button>
         <div class="muted small" id="st" style="margin-top:8px">Нажмите и скажите слово</div></div>
       <div id="fbw"></div>`;
-    $("#mic").onclick=()=>rec?stopRec():listen(c);
+    $("#mic").onclick=()=>rec?finishRec():listen(c);
   }
-  function stopRec(){ if(rec){ try{ rec.abort(); }catch{} rec=null; } const m=$("#mic"); if(m) m.classList.remove("on"); }
+  function stopRec(){ if(rec){ const r=rec; rec=null; r.onresult=r.onend=r.onerror=null; try{ r.abort(); }catch{} } const m=$("#mic"); if(m) m.classList.remove("on"); }
+  function finishRec(){ if(rec){ try{ rec.stop(); }catch{} } }   // повторное нажатие - закончить и проверить сказанное
   function listen(c){
     if(done) return;
     try{ speechSynthesis.cancel(); }catch{}
-    const r=new SR(); rec=r; let got=false;
-    r.lang=sayLang(c); r.interimResults=false; r.maxAlternatives=5; r.continuous=false;
-    r.onresult=e=>{ if(!live()) return; got=true; const alts=[...e.results[0]].map(a=>a.transcript); evaluate(c,alts); };
-    r.onerror=e=>{ got=true; const m={"not-allowed":"Нет доступа к микрофону - разрешите его в настройках браузера","service-not-allowed":"Распознавание речи отключено в настройках устройства (на iPhone - включите Диктовку)","no-speech":"Ничего не слышно - попробуйте ещё раз, ближе к микрофону","network":"Для распознавания нужен интернет"}[e.error]||("Не удалось распознать ("+e.error+")");
+    try{ if(actx&&actx.state==="running") actx.suspend(); }catch{}   // освобождаем звук для микрофона (iPhone)
+    const r=new SR(); rec=r; let last=null, judged=false, failed=false;
+    // Safari на iPhone часто не помечает результат окончательным - поэтому берём и промежуточные,
+    // а проверяем последний услышанный вариант, когда распознавание закончится
+    r.lang=sayLang(c); r.interimResults=true; r.maxAlternatives=5; r.continuous=false;
+    const judge=()=>{ if(judged||!last||!live()) return; judged=true; evaluate(c,last); };
+    r.onresult=e=>{ if(!live()) return;
+      const res=[...e.results];
+      last=res.length===1?[...res[0]].map(a=>a.transcript):[res.map(x=>x[0].transcript).join("")];
+      last=last.map(t=>t.trim()).filter(Boolean); if(!last.length){ last=null; return; }
+      const st=$("#st"); if(st&&!judged) st.textContent="Слышу: «"+last[0]+"»";
+      if(res[res.length-1].isFinal){ judge(); try{ r.stop(); }catch{} } };
+    r.onerror=e=>{ if(e.error==="aborted") return; failed=true;
+      const m={"not-allowed":"Нет доступа к микрофону - разрешите его в настройках браузера","service-not-allowed":"Распознавание речи отключено в настройках устройства (на iPhone - включите Диктовку: Настройки → Основные → Клавиатура)","no-speech":"Ничего не слышно - попробуйте ещё раз, ближе к микрофону","network":"Для распознавания нужен интернет","language-not-supported":"Распознавание этого языка недоступно на устройстве - добавьте его в языки Диктовки"}[e.error]||("Не удалось распознать ("+e.error+")");
       const st=$("#st"); if(st) st.textContent=m; };
-    r.onend=()=>{ if(rec===r) rec=null; const mic=$("#mic"); if(mic) mic.classList.remove("on"); const st=$("#st"); if(!got&&st) st.textContent="Ничего не распознано - попробуйте ещё раз"; };
-    try{ r.start(); $("#mic").classList.add("on"); $("#st").textContent="Слушаю…"; }catch(e){ rec=null; toast("Не удалось включить микрофон"); }
+    r.onend=()=>{ if(rec===r) rec=null; const mic=$("#mic"); if(mic) mic.classList.remove("on");
+      if(last) return judge();
+      const st=$("#st"); if(!failed&&!judged&&st) st.textContent="Ничего не распознано - попробуйте ещё раз"; };
+    try{ r.start(); $("#mic").classList.add("on"); $("#st").textContent="Слушаю… Скажите слово, затем нажмите на микрофон ещё раз"; }catch(e){ rec=null; toast("Не удалось включить микрофон"); }
   }
   function evaluate(c, alts){
     const target=norm(c.t), heard=alts[0]||"";

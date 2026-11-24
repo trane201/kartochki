@@ -25,7 +25,10 @@ CARDS = """丁=dīng — гвоздь
 老师=lǎoshī — учитель"""
 # озвучка и звуки - заглушки, чтобы тест не зависел от голосов в системе
 STUB = """window.__said=[]; speechSynthesis.speak=u=>{window.__said.push(u.text); setTimeout(()=>u.onend&&u.onend(),30)}; speechSynthesis.cancel=()=>{};
-window.SpeechRecognition=window.webkitSpeechRecognition=class{ start(){ setTimeout(()=>{ this.onresult&&this.onresult({results:[[{transcript:window.__heard||'人'}]]}); this.onend&&this.onend(); },50);} abort(){} };"""
+// распознавание как в Safari на iPhone: результат приходит только промежуточным (isFinal=false)
+// и только при interimResults=true; без этого Safari просто завершает запись без результата
+window.SpeechRecognition=window.webkitSpeechRecognition=class{ start(){ setTimeout(()=>{ const r=[{transcript:window.__heard||'人'}]; r.isFinal=false;
+  if(this.interimResults) this.onresult&&this.onresult({results:[r]}); this.onend&&this.onend(); },50);} stop(){} abort(){} };"""
 
 problems = []
 def check(cond, msg):
@@ -80,6 +83,11 @@ async def run(browser, name, viewport, mobile):
             check(await pg.query_selector("#ag") is not None, f"[{name}] {mode}: экран результата с «Повторить»")
             await pg.click("#ag"); await pg.wait_for_timeout(300)
             check(await pg.query_selector("#qp") is not None, f"[{name}] {mode}: «Повторить» запускает тот же тренажёр")
+        if mode == "speak":
+            term = await pg.evaluate("document.querySelector('#qp .big, #qp > div:nth-of-type(2)')?.innerText||''")
+            await pg.evaluate(f"window.__heard={json.dumps(term)}")
+            await pg.click("#mic"); await pg.wait_for_timeout(300)
+            check("Верно" in await pg.inner_text("#fbw"), f"[{name}] произношение: промежуточный результат (как на iPhone) засчитывается")
         if mode == "exam":
             await finish_quiz(pg)
             if await pg.query_selector("#mg"):
