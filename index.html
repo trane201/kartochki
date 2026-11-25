@@ -179,10 +179,6 @@ td.acts{width:84px;text-align:right;white-space:nowrap;padding:4px}
 .bigplay svg{width:40px;height:40px}
 .bigplay.spk{position:static;width:96px;height:96px;background:var(--accent);color:#fff}
 .bigplay.playing{animation:spkpulse 1s ease-in-out infinite}
-.mic{width:96px;height:96px;border-radius:50%;border:0;background:var(--bad);color:#fff;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
-.mic svg{width:40px;height:40px}
-.mic.on{animation:micpulse 1s ease-in-out infinite}
-@keyframes micpulse{0%,100%{box-shadow:0 0 0 0 rgba(229,72,77,.5)}50%{box-shadow:0 0 0 14px rgba(229,72,77,0)}}
 .reveal{margin-top:12px;text-align:center}
 .reveal .pron{font-size:17px}
 tr.dec-row .decomp{margin-top:0}
@@ -497,7 +493,7 @@ function wireStar(b, deck, c){ if(!b) return; b.onclick=e=>{ e.preventDefault();
   b.classList.toggle("on",on); b.textContent=on?"★":"☆"; b.title=on?"Снять отметку":"Отметить как трудную"; toast(on?"Отмечено ★":"Отметка снята"); }; }
 const noteHtml = c => c.n ? `<div class="note-txt">${esc(c.n)}</div>` : "";
 const hasCJK = cards => cards.some(c=>/[㐀-鿿]/.test(c.t));
-const ALL_MODES=[["review","Повторение"],["cards","Карточки"],["test","Тест"],["write","Ввод"],["listen","Аудирование"],["tones","Тоны"],["speak","Произношение"],["match","Подбор"],["exam","Экзамен"],["endless","Бесконечный"]];
+const ALL_MODES=[["review","Повторение"],["cards","Карточки"],["test","Тест"],["write","Ввод"],["listen","Аудирование"],["tones","Тоны"],["match","Подбор"],["exam","Экзамен"],["endless","Бесконечный"]];
 const STAR_MODES=[["cards","Карточки"],["test","Тест"],["write","Ввод"],["listen","Аудирование"],["endless","Бесконечный"]];
 
 /* ---------- Разбор иероглифов (данные Make Me a Hanzi, hanzi.json) ---------- */
@@ -717,7 +713,7 @@ async function viewStudy(ids, mode, star){
   loading(); const lv=alive();
   const deck=await loadDeck(ids, star); if(!lv()||!deck) return;
   const prev=cleanup;
-  const run={cards:viewCards,test:viewTest,write:viewWrite,review:viewReview,listen:viewListen,speak:viewSpeak,match:viewMatch,tones:viewTones,exam:viewExam,endless:viewEndless}[mode]||viewCards;
+  const run={cards:viewCards,test:viewTest,write:viewWrite,review:viewReview,listen:viewListen,match:viewMatch,tones:viewTones,exam:viewExam,endless:viewEndless}[mode]||viewCards;
   run(deck);
   const inner=cleanup;
   const onHide=()=>{ deck.flushAll(); flushStats(); };
@@ -944,7 +940,6 @@ async function viewSet(id){
       <a class="panel mode" href="#/study/${id}/test"><b>Тест</b><span class="muted small">Выбор ответа из вариантов</span></a>
       <a class="panel mode" href="#/study/${id}/write"><b>Ввод</b><span class="muted small">Напишите ответ сами${hasPron(s.cards)?" - в том числе пиньинь":""}</span></a>
       <a class="panel mode" href="#/study/${id}/listen"><b>Аудирование</b><span class="muted small">Слушайте и выбирайте, что прозвучало</span></a>
-      <a class="panel mode" href="#/study/${id}/speak"><b>Произношение</b><span class="muted small">Скажите слово в микрофон - сайт проверит</span></a>
       ${deck.cards.some(toneable)?`<a class="panel mode" href="#/study/${id}/tones"><b>Тоны</b><span class="muted small">Выберите пиньинь с правильными тонами</span></a>`:""}
       <a class="panel mode" href="#/study/${id}/match"><b>Подбор</b><span class="muted small">Соедините пары на время</span></a>
       <a class="panel mode" href="#/study/${id}/exam"><b>Экзамен</b><span class="muted small">Все тренажёры вперемешку, оценка в конце</span></a>
@@ -1503,88 +1498,6 @@ function viewReview(deck){
   };
   document.addEventListener("keydown",key); cleanup=()=>document.removeEventListener("keydown",key);
   intro();
-}
-
-/* ---------- Режим «Произношение» (распознавание речи) ---------- */
-const MIC_SVG=`<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>`;
-function viewSpeak(deck){
-  const live=alive();
-  const back=`<p class="small"><a href="${deck.back}">← ${esc(deck.title)}</a></p>`;
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){ app.innerHTML=back+`<h1>Произношение</h1><div class="panel">Этот браузер не умеет распознавать речь. Подойдут Safari на iPhone (с включённой диктовкой в настройках клавиатуры) или Chrome на компьютере.</div>`; return; }
-  const opt={n:"10",showPron:true,...LS.get("kartochki_speak_opts",{})};
-  let qs=[], qi=0, right=0, wrong=[], rec=null, done=false;
-  function setup(){
-    const N=deck.cards.length; if(opt.n!=="all"&&+opt.n>=N) opt.n="all";
-    app.innerHTML=back+`<h1>Произношение</h1><div class="panel">
-      <p class="muted small" style="margin-top:0">Нажмите на микрофон и произнесите слово - браузер распознает речь и сравнит с карточкой. Тоны так проверяются лишь приблизительно: одиночный иероглиф иногда распознаётся как другой с тем же звучанием. Если уверены в своём произношении, нажмите «Засчитать».</p>
-      ${hasPron(deck.cards)?`<label>Подсказка с произношением</label>${seg(opt,"showPron",[[true,"Показывать"],[false,"Скрыть"]])}`:""}
-      <label>Количество слов</label>${seg(opt,"n",[...["10","20"].filter(v=>+v<N).map(v=>[v,v]),["all","Все ("+N+")"]])}
-      ${soundSeg()}
-      <div style="margin-top:20px"><button class="btn primary" id="go">Начать</button></div></div>`;
-    bindSeg(opt,()=>{ LS.set("kartochki_speak_opts",opt); setup(); });
-    $("#go").onclick=startAll;
-  }
-  function startAll(){ const N=deck.cards.length; qs=shuffle(deck.cards).slice(0,opt.n==="all"?N:+opt.n); qi=0; right=0; wrong=[]; renderQ(); }
-  const norm=t=>String(t).toLowerCase().replace(/[\s.,!?;:。，！？、；：“”"'«»…\-–—]/g,"");
-  function renderQ(){
-    stopRec();
-    if(qi>=qs.length){ const w=wrong.slice(); return renderResult(deck,{right,total:qs.length,wrong:w},{title:"Произношение",again:startAll,setup,
-      redo:w.length?()=>{ qs=shuffle(w.map(x=>x.card)); qi=0; right=0; wrong=[]; renderQ(); }:null}); }
-    done=false; const c=qs[qi];
-    app.innerHTML=`<div class="study-top"><a class="small" href="${deck.back}">← ${esc(deck.title)}</a><span class="muted small">${qi+1} / ${qs.length}</span></div>
-      <div class="progress"><i class="b" style="width:${qi/qs.length*100}%"></i></div>
-      <div class="panel question" id="qp">${spkBtn({...c,lang:c.lang==="off"?"auto":c.lang})}<div class="muted small" style="margin-bottom:8px">Произнесите</div>
-        <div${termCls(c.t)}>${esc(c.t)}</div>${opt.showPron?pronHtml(c):""}<div class="muted small" style="margin-top:8px">${esc(c.d)}</div></div>
-      <div class="center" style="margin-top:16px"><button class="mic" id="mic" aria-label="Говорить">${MIC_SVG}</button>
-        <div class="muted small" id="st" style="margin-top:8px">Нажмите и скажите слово</div></div>
-      <div id="fbw"></div>`;
-    $("#mic").onclick=()=>rec?finishRec():listen(c);
-  }
-  function stopRec(){ if(rec){ const r=rec; rec=null; r.onresult=r.onend=r.onerror=null; try{ r.abort(); }catch{} } const m=$("#mic"); if(m) m.classList.remove("on"); }
-  function finishRec(){ if(rec){ try{ rec.stop(); }catch{} } }   // повторное нажатие - закончить и проверить сказанное
-  function listen(c){
-    if(done) return;
-    try{ speechSynthesis.cancel(); }catch{}
-    try{ if(actx&&actx.state==="running") actx.suspend(); }catch{}   // освобождаем звук для микрофона (iPhone)
-    const r=new SR(); rec=r; let last=null, judged=false, failed=false;
-    // Safari на iPhone часто не помечает результат окончательным - поэтому берём и промежуточные,
-    // а проверяем последний услышанный вариант, когда распознавание закончится
-    r.lang=sayLang(c); r.interimResults=true; r.maxAlternatives=5; r.continuous=false;
-    const judge=()=>{ if(judged||!last||!live()) return; judged=true; evaluate(c,last); };
-    r.onresult=e=>{ if(!live()) return;
-      const res=[...e.results];
-      last=res.length===1?[...res[0]].map(a=>a.transcript):[res.map(x=>x[0].transcript).join("")];
-      last=last.map(t=>t.trim()).filter(Boolean); if(!last.length){ last=null; return; }
-      const st=$("#st"); if(st&&!judged) st.textContent="Слышу: «"+last[0]+"»";
-      if(res[res.length-1].isFinal){ judge(); try{ r.stop(); }catch{} } };
-    r.onerror=e=>{ if(e.error==="aborted") return; failed=true;
-      const m={"not-allowed":"Нет доступа к микрофону - разрешите его в настройках браузера","service-not-allowed":"Распознавание речи отключено в настройках устройства (на iPhone - включите Диктовку: Настройки → Основные → Клавиатура)","no-speech":"Ничего не слышно - попробуйте ещё раз, ближе к микрофону","network":"Для распознавания нужен интернет","language-not-supported":"Распознавание этого языка недоступно на устройстве - добавьте его в языки Диктовки"}[e.error]||("Не удалось распознать ("+e.error+")");
-      const st=$("#st"); if(st) st.textContent=m; };
-    r.onend=()=>{ if(rec===r) rec=null; const mic=$("#mic"); if(mic) mic.classList.remove("on");
-      if(last) return judge();
-      const st=$("#st"); if(!failed&&!judged&&st) st.textContent="Ничего не распознано - попробуйте ещё раз"; };
-    try{ r.start(); $("#mic").classList.add("on"); $("#st").textContent="Слушаю… Скажите слово, затем нажмите на микрофон ещё раз"; }catch(e){ rec=null; toast("Не удалось включить микрофон"); }
-  }
-  function evaluate(c, alts){
-    const target=norm(c.t), heard=alts[0]||"";
-    const ok=alts.some(a=>{ const n=norm(a); return n===target||(target.length>=1&&n.includes(target)&&n.length<=target.length+2)||(!/[㐀-鿿]/.test(c.t)&&answerMatches(a,c.t)); });
-    const st=$("#st"); if(st) st.textContent="Распознано: «"+heard+"»";
-    const qp=$("#qp"); if(qp){ qp.classList.remove("right","wrong"); qp.classList.add(ok?"right":"wrong"); }
-    sfx(ok);
-    if(ok){ done=true; right++; recordAnswer(true);
-      $("#fbw").innerHTML=`<div class="fb right"><b>Верно!</b> Распознано: <span class="ans">${esc(heard)}</span></div><div class="row" style="margin-top:12px"><button class="btn primary" id="nx">Далее</button></div>`;
-      $("#nx").onclick=()=>{ qi++; renderQ(); }; }
-    else {
-      $("#fbw").innerHTML=`<div class="fb wrong">Не совпало. Распознано: <span class="ans">${esc(heard)||"-"}</span>${alts.length>1?`<br><span class="small">варианты: ${alts.slice(1).map(esc).join(", ")}</span>`:""}</div>
-        <div class="row" style="margin-top:10px"><button class="btn primary" id="again">Ещё раз</button><button class="btn" id="ovr">Засчитать</button><button class="btn ghost" id="skip">Дальше</button></div>`;
-      $("#again").onclick=()=>{ $("#fbw").innerHTML=""; $("#qp")?.classList.remove("right","wrong"); listen(c); };
-      $("#ovr").onclick=()=>{ done=true; right++; recordAnswer(true); qi++; renderQ(); };
-      $("#skip").onclick=()=>{ done=true; recordAnswer(false); deck.miss(c); wrong.push({card:c,ask:`<b>${esc(c.t)}</b>${pronHtml(c)}`,ans:esc(c.d),given:esc(heard)||"-"}); qi++; renderQ(); };
-    }
-  }
-  cleanup=()=>stopRec();
-  setup();
 }
 
 /* ---------- Режим «Подбор» ---------- */

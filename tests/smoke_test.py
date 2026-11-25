@@ -24,11 +24,7 @@ CARDS = """丁=dīng — гвоздь
 中国=zhōngguó — Китай
 老师=lǎoshī — учитель"""
 # озвучка и звуки - заглушки, чтобы тест не зависел от голосов в системе
-STUB = """window.__said=[]; speechSynthesis.speak=u=>{window.__said.push(u.text); setTimeout(()=>u.onend&&u.onend(),30)}; speechSynthesis.cancel=()=>{};
-// распознавание как в Safari на iPhone: результат приходит только промежуточным (isFinal=false)
-// и только при interimResults=true; без этого Safari просто завершает запись без результата
-window.SpeechRecognition=window.webkitSpeechRecognition=class{ start(){ setTimeout(()=>{ const r=[{transcript:window.__heard||'人'}]; r.isFinal=false;
-  if(this.interimResults) this.onresult&&this.onresult({results:[r]}); this.onend&&this.onend(); },50);} stop(){} abort(){} };"""
+STUB = """window.__said=[]; speechSynthesis.speak=u=>{window.__said.push(u.text); setTimeout(()=>u.onend&&u.onend(),30)}; speechSynthesis.cancel=()=>{};"""
 
 problems = []
 def check(cond, msg):
@@ -65,7 +61,7 @@ async def run(browser, name, viewport, mobile):
     modes = await pg.evaluate("[...document.querySelectorAll('.mode b')].map(x=>x.innerText)")
     check(all(m in modes for m in ["Повторение","Карточки","Тест","Ввод","Аудирование","Тоны","Подбор","Экзамен","Бесконечный"]), f"[{name}] все режимы на странице набора")
 
-    for mode in ["cards", "test", "write", "listen", "tones", "speak", "match", "exam", "endless", "review"]:
+    for mode in ["cards", "test", "write", "listen", "tones", "match", "exam", "endless", "review"]:
         await pg.goto(URL + "#/"); await pg.goto(URL + f"#/study/{sid}/{mode}"); await pg.wait_for_timeout(400)
         check(not await pg.evaluate(overflow), f"[{name}] {mode}: ничего не вылезает за край")
         if await pg.query_selector("#go"):
@@ -83,11 +79,6 @@ async def run(browser, name, viewport, mobile):
             check(await pg.query_selector("#ag") is not None, f"[{name}] {mode}: экран результата с «Повторить»")
             await pg.click("#ag"); await pg.wait_for_timeout(300)
             check(await pg.query_selector("#qp") is not None, f"[{name}] {mode}: «Повторить» запускает тот же тренажёр")
-        if mode == "speak":
-            term = await pg.evaluate("document.querySelector('#qp .big, #qp > div:nth-of-type(2)')?.innerText||''")
-            await pg.evaluate(f"window.__heard={json.dumps(term)}")
-            await pg.click("#mic"); await pg.wait_for_timeout(300)
-            check("Верно" in await pg.inner_text("#fbw"), f"[{name}] произношение: промежуточный результат (как на iPhone) засчитывается")
         if mode == "exam":
             await finish_quiz(pg)
             if await pg.query_selector("#mg"):
