@@ -151,6 +151,76 @@ async def run(browser, name, viewport, mobile):
     await pg.wait_for_timeout(2300)
     st = await pg.evaluate("Object.values(JSON.parse(localStorage.getItem('kartochki_stats_v1')||'{\"days\":{}}').days).reduce((a,d)=>a+d.n,0)")
     check(st >= 10, f"[{name}] статистика копит ответы ({st})")
+    # карточки: листание по кругу с улётом карточки, смахивание влево - следующая, вправо - предыдущая
+    await pg.goto(URL + "#/"); await pg.goto(URL + f"#/study/{sid}/cards"); await pg.wait_for_timeout(400)
+    pos = lambda: pg.evaluate("document.querySelector('.study-top .muted.small').innerText")
+    if mobile:
+        swipe = """dx => { const el=document.querySelector('#card'), r=el.getBoundingClientRect(), x=r.left+r.width/2, y=r.top+r.height/2;
+          const t=(cx)=>new Touch({identifier:1,target:el,clientX:cx,clientY:y});
+          el.dispatchEvent(new TouchEvent('touchstart',{touches:[t(x)],changedTouches:[t(x)],bubbles:true}));
+          for(let k=1;k<=5;k++) el.dispatchEvent(new TouchEvent('touchmove',{touches:[t(x+dx*k/5)],changedTouches:[t(x+dx*k/5)],bubbles:true}));
+          el.dispatchEvent(new TouchEvent('touchend',{touches:[],changedTouches:[t(x+dx)],bubbles:true})); }"""
+        await pg.evaluate(swipe, -150); await pg.wait_for_timeout(600)
+        check((await pos()).startswith("2 /"), f"[{name}] карточки: смахивание влево - следующая")
+        await pg.evaluate(swipe, 150); await pg.wait_for_timeout(600)
+        await pg.evaluate(swipe, 150); await pg.wait_for_timeout(600)
+        check((await pos()).startswith("9 /"), f"[{name}] карточки: вправо с первой - последняя (по кругу)")
+        await pg.evaluate(swipe, 30); await pg.wait_for_timeout(500)
+        check((await pos()).startswith("9 /"), f"[{name}] карточки: короткое смахивание не листает")
+    else:
+        await pg.click("#pv"); await pg.wait_for_timeout(600)
+        check((await pos()).startswith("9 /"), f"[{name}] карточки: ← с первой - последняя (по кругу)")
+        await pg.click("#nx"); await pg.wait_for_timeout(600)
+        check((await pos()).startswith("1 /"), f"[{name}] карточки: → с последней - первая (по кругу)")
+        await pg.keyboard.press("ArrowRight"); await pg.wait_for_timeout(600)
+        check((await pos()).startswith("2 /"), f"[{name}] карточки: стрелка на клавиатуре листает")
+    for _ in range(12):
+        if not await pg.query_selector("#yes"): break
+        await pg.click("#yes"); await pg.wait_for_timeout(60)
+    check("Круг пройден" in await pg.inner_text("main"), f"[{name}] карточки: «Знаю» на всех - итог круга")
+
+    # тест: по умолчанию 6 вариантов ответа, настройка меняет число
+    await pg.goto(URL + "#/"); await pg.goto(URL + f"#/study/{sid}/test"); await pg.wait_for_timeout(400)
+    await pg.click("[data-o='dir'][data-v='td']"); await pg.wait_for_timeout(150)
+    await pg.click("#go"); await pg.wait_for_timeout(300)
+    check(await pg.evaluate("document.querySelectorAll('.opt').length") == 6, f"[{name}] тест: 6 вариантов ответа по умолчанию")
+    check(not await pg.evaluate(overflow), f"[{name}] тест: 6 вариантов помещаются по ширине")
+    await pg.goto(URL + "#/"); await pg.goto(URL + f"#/study/{sid}/test"); await pg.wait_for_timeout(400)
+    await pg.click("[data-o='nOpts'][data-v='8']"); await pg.wait_for_timeout(150)
+    await pg.click("#go"); await pg.wait_for_timeout(300)
+    check(await pg.evaluate("document.querySelectorAll('.opt').length") == 8, f"[{name}] тест: настройка «8 вариантов»")
+    await pg.click(".opt >> nth=0"); await pg.wait_for_timeout(200)
+    if mobile:
+        b = await pg.evaluate("(()=>{ const r=document.querySelector('#nx').getBoundingClientRect(); return [r.left, r.right, innerWidth]; })()")
+        check(b[0] > b[2] * 0.3 and b[1] > b[2] - 40, f"[{name}] «Далее» справа на iPhone ({b})")
+    await pg.evaluate("localStorage.setItem('kartochki_settings', JSON.stringify({...JSON.parse(localStorage.getItem('kartochki_settings')||'{}'), nOpts:'6'}))")
+
+    # бесконечный: можно выбрать отдельный вид вопросов
+    await pg.goto(URL + "#/"); await pg.goto(URL + f"#/study/{sid}/endless"); await pg.wait_for_timeout(400)
+    for t in ["td", "dt", "tp"]:   # снимаем вопросы теста, оставляем только «ввод перевода»
+        if await pg.query_selector(f"[data-m='{t}'].on"):
+            if t == "td": await pg.click("[data-m='wtd']"); await pg.wait_for_timeout(100)
+            await pg.click(f"[data-m='{t}']"); await pg.wait_for_timeout(100)
+    sel_ts = await pg.evaluate("[...document.querySelectorAll('[data-m].on')].map(b=>b.dataset.m)")
+    check(sel_ts == ["wtd"], f"[{name}] бесконечный: выбран один вид вопросов ({sel_ts})")
+    check(not await pg.evaluate(overflow), f"[{name}] бесконечный: настройки помещаются по ширине")
+    await pg.click("#go"); await pg.wait_for_timeout(300)
+    kinds = []
+    for _ in range(3):
+        kinds.append(await pg.query_selector("#ans") is not None and "Напишите перевод" in await pg.inner_text("main"))
+        await pg.fill("#ans", "x"); await pg.click("#chk"); await pg.wait_for_timeout(100); await pg.click("#nx"); await pg.wait_for_timeout(150)
+    check(all(kinds), f"[{name}] бесконечный: идут только выбранные вопросы")
+
+    # главная: «Выбрать все» в режиме выбора нескольких наборов
+    await pg.goto(URL + "#/"); await pg.wait_for_timeout(500)
+    await pg.click("#selmode"); await pg.wait_for_timeout(300)
+    await pg.click("#selall"); await pg.wait_for_timeout(300)
+    n_all = await pg.evaluate("document.querySelectorAll('.setcard').length")
+    check(n_all >= 2 and await pg.evaluate("document.querySelectorAll('.setcard.sel').length") == n_all, f"[{name}] «Выбрать все» выбирает все наборы")
+    check(not await pg.evaluate(overflow), f"[{name}] панель выбора помещается по ширине")
+    await pg.click("#selall"); await pg.wait_for_timeout(300)
+    check(await pg.evaluate("document.querySelectorAll('.setcard.sel').length") == 0, f"[{name}] «Снять все» снимает выбор")
+    await pg.click("#selmode"); await pg.wait_for_timeout(200)
     check(not errs, f"[{name}] нет ошибок JavaScript: {errs[:3]}")
     await ctx.close()
 

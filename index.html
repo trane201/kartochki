@@ -94,7 +94,11 @@ td .pron{font-size:13px;margin-top:2px}
   font-size:clamp(20px,4.6vw,30px);overflow:auto;word-break:break-word}
 .face.back{transform:rotateY(180deg)}
 .face .hint{position:absolute;top:12px;left:16px;font-size:13px;color:var(--muted)}
-.flip.swl .face{border-color:var(--bad)} .flip.swr .face{border-color:var(--ok)}
+/* листание «как в Тиндере»: карточка едет за пальцем и улетает, следующая появляется */
+.flip.fly{transition:transform .3s ease-in,opacity .3s ease-in}
+.flip.back-in{transition:transform .25s ease-out}
+.flip.enter{animation:cardin .25s ease-out}
+@keyframes cardin{from{transform:scale(.9) translateY(14px);opacity:0}to{transform:none;opacity:1}}
 .spk{position:absolute;top:8px;right:8px;width:44px;height:44px;border-radius:50%;border:0;background:var(--accent-soft);color:var(--accent);
   display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background .2s,color .2s}
 .spk.playing{background:var(--accent);color:#fff;animation:spkpulse 1s ease-in-out infinite}
@@ -112,6 +116,9 @@ td .pron{font-size:13px;margin-top:2px}
 .grades .btn{flex-direction:column;gap:0;padding:8px 4px;line-height:1.2}
 .grades .btn small{font-weight:400;font-size:12px;opacity:.85}
 .opts{display:grid;gap:10px;margin-top:14px}
+.opts.two{grid-template-columns:1fr 1fr}
+.etype{margin:10px 0 4px}
+.etype .seg{margin-top:6px}
 .opt{text-align:left;font:inherit;color:var(--text);background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:14px 16px;cursor:pointer;min-height:52px;word-break:break-word}
 .opt.right{border-color:var(--ok);background:var(--ok-soft)}
 .opt.sel{border-color:var(--accent);background:var(--accent-soft)}
@@ -200,6 +207,8 @@ tr.dec-row .decomp{margin-top:0}
   .seg button{padding:8px 11px;font-size:14px}
   header .who{display:none}
   .match{grid-template-columns:repeat(3,1fr);gap:8px}
+  #nxw,#af .row{justify-content:flex-end}
+  #nxw #nx,#af #chk{order:2;min-width:52%}
   .mt{min-height:84px;font-size:14px}
   .mt.term{font-size:24px}
 }
@@ -245,7 +254,7 @@ const dayStr = n => new Date(n*864e5).toISOString().slice(0,10);         // но
 const fmtDay = n => new Date(n*864e5).toLocaleDateString("ru-RU",{day:"numeric",month:"short",timeZone:"UTC"});
 
 /* ---------- Настройки (в браузере) ---------- */
-const settings = { tones:true, autoSpeak:false, front:"t", revFront:"t", pron:"front", shuffle:false, onlyNew:false, decomp:false, sound:true, showPron:true, sayAsk:true, toneSound:false, ...LS.get("kartochki_settings",{}) };
+const settings = { nOpts:"6", tones:true, autoSpeak:false, front:"t", revFront:"t", pron:"front", shuffle:false, onlyNew:false, decomp:false, sound:true, showPron:true, sayAsk:true, toneSound:false, ...LS.get("kartochki_settings",{}) };
 const saveSettings = () => LS.set("kartochki_settings", settings);
 
 /* ---------- Пиньинь: тоны, цвета, сравнение ---------- */
@@ -677,7 +686,7 @@ window.addEventListener("offline",()=>{ renderHeader(); toast("Нет интер
 const demoNote=()=>store.demo?`<div class="note"><b>Демо-режим.</b> Данные хранятся только в этом браузере. Чтобы включить вход, синхронизацию между iPhone и компьютером и доступ для других людей, подключите Firebase по инструкции.</div>`:"";
 const loading=()=>{ app.innerHTML=`<div class="spin">Загрузка…</div>`; };
 const seg=(obj,key,vals)=>`<span class="seg">${vals.map(([v,l])=>`<button data-o="${key}" data-v="${v}" class="${String(obj[key])===String(v)?"on":""}">${l}</button>`).join("")}</span>`;
-const GLOBAL_KEYS=new Set(["sound","showPron","sayAsk","toneSound","tones","autoSpeak","decomp"]);   // общие настройки хранятся в settings
+const GLOBAL_KEYS=new Set(["nOpts","sound","showPron","sayAsk","toneSound","tones","autoSpeak","decomp"]);   // общие настройки хранятся в settings
 const bindSeg=(obj,onChange)=>$$("[data-o]").forEach(b=>b.onclick=()=>{ const k=b.dataset.o, v=b.dataset.v, val=v==="true"?true:v==="false"?false:v;
   const target=GLOBAL_KEYS.has(k)?settings:obj; target[k]=val; if(target===settings) saveSettings(); onChange(k); });
 
@@ -752,6 +761,7 @@ async function viewHome(){
   let stars=0;
   [...mine,...shared,...avail].forEach(s=>{ const sr=new Set(stMap[s.id]?.starred||[]); s.cards.forEach(c=>{ if(sr.has(c.id)) stars++; }); });
   const sel=homeSel;
+  const allIds=[...shared,...mine,...other.filter(s=>!s.gone)].map(s=>s.id);   // для «Выбрать все»
   // папки
   const groupsAll={};
   const groupHtml=(list,pref)=>{ const groups={}; list.forEach(s=>{ const f=(s.folder||"").trim(); (groups[f]=groups[f]||[]).push(s); });
@@ -776,13 +786,14 @@ async function viewHome(){
       :`<div class="panel muted">${shared.length?"Здесь появятся ваши собственные наборы. Общие наборы выше можно учить и без них.":"Пока нет наборов. Нажмите «Новый набор» и вставьте список терминов."}</div>`}
     ${other.length?`<h2>Открытые по ссылке</h2><div class="grid">${other.map(studyCard).join("")}</div>`:""}</div>
     ${mine.length?`<div class="row" style="margin-top:30px"><span class="muted small">Резервная копия всех наборов и прогресса:</span><button class="btn small" id="bk">Скачать</button><button class="btn small" id="rsb">Восстановить из файла</button><input type="file" id="rsf" accept=".json,application/json" hidden></div>`:""}
-    ${sel?`<div class="selbar"><span class="small muted">Выбрано: ${sel.size}</span><select id="gm" style="width:auto;padding:8px 10px">${ALL_MODES.map(([m,l])=>`<option value="${m}">${l}</option>`).join("")}</select>
+    ${sel?`<div class="selbar"><span class="small muted">Выбрано: ${sel.size}</span><button class="btn small" id="selall">${allIds.every(id=>sel.has(id))?"Снять все":"Выбрать все"}</button><select id="gm" style="width:auto;padding:8px 10px">${ALL_MODES.map(([m,l])=>`<option value="${m}">${l}</option>`).join("")}</select>
       <label class="small" style="display:inline-flex;gap:6px;align-items:center;margin:0;font-weight:400"><input type="checkbox" id="gs"> только ★</label>
       <button class="btn small primary" id="gogo" ${sel.size?"":"disabled"}>Начать</button></div>`:""}`;
   bindRemove();
   const sm=$("#selmode"); if(sm) sm.onclick=()=>{ homeSel=homeSel?null:new Set(); viewHome(); };
   if(sel){
     $$(".setcard").forEach(a=>a.onclick=e=>{ e.preventDefault(); const id=a.dataset.id; sel.has(id)?sel.delete(id):sel.add(id); viewHome(); });
+    const sa=$("#selall"); if(sa) sa.onclick=()=>{ if(allIds.every(id=>sel.has(id))) sel.clear(); else allIds.forEach(id=>sel.add(id)); viewHome(); };
     $$("[data-selfolder]").forEach(a=>a.onclick=e=>{ e.preventDefault(); (groupsAll[a.dataset.selfolder]||[]).forEach(s=>sel.add(s.id)); viewHome(); });
     const gg=$("#gogo"); if(gg) gg.onclick=()=>{ const ids=[...sel].join(","); homeSel=null; location.hash=`#/study/${ids}/${$("#gm").value}${$("#gs").checked?"/star":""}`; };
   }
@@ -1014,7 +1025,7 @@ function viewCards(deck){
     if(!list&&opt.onlyNew){ const f=cards.filter(c=>!deck.isKnown(c)); if(f.length) cards=f; else toast("Все карточки уже выучены - показываю все"); }
     order=opt.shuffle?shuffle(cards):cards.slice(); i=0; flipped=false; round={k:0,u:0}; unknown=[]; render(true);
   };
-  function render(say){
+  function render(say, enter){
     if(i>=order.length) return renderEnd();
     const c=order[i], term=`<div><div${termCls(c.t)}>${esc(c.t)}</div>`, def=`<div>${esc(c.d)}</div>`, extra=noteHtml(c)+decompHtml(c,deck);
     if(opt.decomp&&!HANZI&&hasCJK([c])) { const lv=alive(); loadHanzi().then(()=>{ if(lv()&&order[i]===c) render(); }); }
@@ -1025,8 +1036,8 @@ function viewCards(deck){
       <div class="flip noanim ${flipped?"flipped":""}" id="card"><div class="inner">
         <div class="face front"><span class="hint">${F[2]}${deck.isKnown(c)?" · знаю":""}</span>${F[4]}<div>${F[0]}</div></div>
         <div class="face back"><span class="hint">${F[3]}</span>${F[5]}<div>${F[1]}</div></div></div></div>
-      <p class="center muted small" style="margin:8px 0 0">Нажмите на карточку, чтобы перевернуть${matchMedia("(hover:none)").matches?" · смахните вправо - знаю, влево - не знаю":" · пробел, ← →, 1 - не знаю, 2 - знаю, S - озвучить"}</p>
-      <div class="study-btns"><button class="btn nav" id="pv" ${i?"":"disabled"}>←</button><button class="btn dont" id="no">Не знаю</button><button class="btn know" id="yes">Знаю</button><button class="btn nav" id="nx">→</button></div>
+      <p class="center muted small" style="margin:8px 0 0">Нажмите на карточку, чтобы перевернуть${matchMedia("(hover:none)").matches?" · смахните влево - следующая, вправо - предыдущая":" · пробел, ← → - листать, 1 - не знаю, 2 - знаю, S - озвучить"}</p>
+      <div class="study-btns"><button class="btn nav" id="pv" title="Предыдущая">←</button><button class="btn dont" id="no">Не знаю</button><button class="btn know" id="yes">Знаю</button><button class="btn nav" id="nx" title="Следующая">→</button></div>
       <div class="opts-row"><span><span class="small muted">Сначала:</span>${seg(opt,"front",[["t","Термин"],["d","Определение"]])}</span>
       ${withPron&&opt.front==="t"?`<span><span class="small muted">Произношение:</span>${seg(opt,"pron",[["front","Сразу"],["back","После переворота"]])}</span>`:""}
       ${seg(opt,"shuffle",[[false,"По порядку"],[true,"Перемешать"]])}${seg(opt,"onlyNew",[[false,"Все"],[true,"Только невыученные"]])}
@@ -1034,20 +1045,36 @@ function viewCards(deck){
       ${withPron?`<span><span class="small muted">Тоны:</span>${seg(opt,"tones",[[true,"Цветом"],[false,"Без цвета"]])}</span>`:""}
       ${hasCJK(deck.cards)?`<span><span class="small muted">Разбор:</span>${seg(opt,"decomp",[[false,"Выкл"],[true,"Вкл"]])}</span>`:""}</div>`;
     requestAnimationFrame(()=>$("#card")?.classList.remove("noanim"));
+    if(enter) $("#card").classList.add("enter");
     if(say&&opt.front==="t") autoSay(c);
     wireStar($(".study-top .starb"),deck,c);
     const card=$("#card");
-    let sx=null, sy=null, swiped=false;
-    card.onclick=()=>{ if(swiped){ swiped=false; return; } flip(); };
-    card.addEventListener("touchstart",e=>{ sx=e.touches[0].clientX; sy=e.touches[0].clientY; },{passive:true});
-    card.addEventListener("touchmove",e=>{ if(sx===null) return; const dx=e.touches[0].clientX-sx;
-      card.classList.toggle("swr",dx>50); card.classList.toggle("swl",dx<-50); },{passive:true});
-    card.addEventListener("touchend",e=>{ if(sx===null) return; const dx=e.changedTouches[0].clientX-sx, dy=e.changedTouches[0].clientY-sy; sx=null;
-      card.classList.remove("swr","swl"); if(Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy)){ swiped=true; mark(dx>0); } });
+    // перетаскивание: карточка едет за пальцем с наклоном; дальше порога - улетает (влево - следующая, вправо - предыдущая)
+    let sx=null, sy=null, dx=0, drag=false, swiped=false;
+    card.onclick=()=>{ if(swiped){ swiped=false; return; } if(!busy) flip(); };
+    card.addEventListener("touchstart",e=>{ if(busy) return; sx=e.touches[0].clientX; sy=e.touches[0].clientY; dx=0; drag=false; card.classList.remove("enter","back-in"); },{passive:true});
+    card.addEventListener("touchmove",e=>{ if(sx===null) return; dx=e.touches[0].clientX-sx; const dy=e.touches[0].clientY-sy;
+      if(!drag){ if(Math.abs(dy)>12&&Math.abs(dy)>Math.abs(dx)){ sx=null; return; } if(Math.abs(dx)>10) drag=true; else return; }
+      card.style.transform=`translateX(${dx}px) rotate(${dx/18}deg)`; },{passive:true});
+    const endDrag=()=>{ if(sx===null) return; sx=null; if(!drag) return; swiped=true; setTimeout(()=>{ swiped=false; },400);
+      if(Math.abs(dx)>70) go(dx<0?1:-1);
+      else { card.classList.add("back-in"); card.style.transform=""; } };
+    card.addEventListener("touchend",endDrag); card.addEventListener("touchcancel",endDrag);
     $("#no").onclick=()=>mark(false); $("#yes").onclick=()=>mark(true);
-    $("#pv").onclick=()=>{ if(i>0){ i--; flipped=false; render(true); } };
-    $("#nx").onclick=()=>{ i++; flipped=false; render(true); };
+    $("#pv").onclick=()=>go(-1);
+    $("#nx").onclick=()=>go(1);
     bindSeg(opt,k=>{ saveSettings(); if(["front","pron","autoSpeak","tones","decomp"].includes(k)) render(); else start(); });
+  }
+  // листание по кругу: dir=1 - следующая (карточка улетает влево), -1 - предыдущая (вправо)
+  let busy=false;
+  function go(dir){
+    if(busy||!order.length) return;
+    const card=$("#card"), out=dir>0?-1:1, lv=alive();
+    const next=()=>{ busy=false; if(!lv()) return; i=(i+dir+order.length)%order.length; flipped=false; render(true,true); };
+    if(!card||matchMedia("(prefers-reduced-motion: reduce)").matches) return next();
+    busy=true; card.classList.remove("enter","back-in"); card.classList.add("fly");
+    card.style.transform=`translate(${out*120}vw, 80px) rotate(${out*28}deg)`; card.style.opacity="0";
+    setTimeout(next,280);
   }
   function flip(){ flipped=!flipped; $("#card")?.classList.toggle("flipped",flipped); if(flipped&&opt.front==="d") autoSay(order[i]); }
   function mark(k){
@@ -1072,8 +1099,8 @@ function viewCards(deck){
   const key=e=>{
     if(e.target.matches("input,textarea,select")||i>=order.length) return;
     if(e.code==="Space"||e.key==="ArrowUp"||e.key==="ArrowDown"){ e.preventDefault(); flip(); }
-    else if(e.key==="ArrowRight"){ i++; flipped=false; render(true); }
-    else if(e.key==="ArrowLeft"&&i>0){ i--; flipped=false; render(true); }
+    else if(e.key==="ArrowRight") go(1);
+    else if(e.key==="ArrowLeft") go(-1);
     else if(e.key==="1") mark(false); else if(e.key==="2") mark(true);
     else if(e.key==="s"||e.key==="ы"){ const c=order[i]; speak(c.t,langFor(c.t,c.lang)); }
   };
@@ -1099,6 +1126,8 @@ function sfx(ok){
     }
   }catch{}
 }
+const nOpts=()=>Math.max(2,+settings.nOpts||6);   // сколько вариантов показывать в вопросах с выбором
+const optsSeg=()=>`<label>Вариантов ответа</label>${seg(settings,"nOpts",[["4","4"],["6","6"],["8","8"]])}`;
 const soundSeg=()=>`<label>Звуки ответа</label>${seg(settings,"sound",[[true,"Вкл"],[false,"Выкл"]])}`;
 const nSeg=(opt,N,vals=["10","20"])=>seg(opt,"n",[...vals.filter(v=>+v<N).map(v=>[v,v]),["all","Все ("+N+")"]]);
 const modeHead=(deck,t)=>`<p class="small"><a href="${deck.back}">← ${esc(deck.title)}</a></p><h1>${t}</h1>`;
@@ -1128,7 +1157,7 @@ function toneOptions(p){
   const parts=parsePinyin(p), syl=parts.filter(x=>x.syl), orig=syl.map(x=>x.tone), correct=buildPinyin(parts,orig);
   const mutable=syl.map((x,i)=>x.tone?i:-1).filter(i=>i>=0);
   const set=new Set([correct]); let tries=0;
-  while(set.size<4&&tries++<80){ const t=orig.slice();
+  while(set.size<nOpts()&&tries++<200){ const t=orig.slice();
     shuffle(mutable).slice(0,1+Math.floor(Math.random()*Math.min(2,mutable.length))).forEach(i=>{ let nt; do{ nt=1+Math.floor(Math.random()*4); }while(nt===orig[i]); t[i]=nt; });
     set.add(buildPinyin(parts,t)); }
   return {correct, options:shuffle([...set])};
@@ -1136,12 +1165,12 @@ function toneOptions(p){
 
 /* ---------- Типы вопросов ---------- */
 const QT={
-  td:{name:"Тест: термин → определение",need:()=>true},
-  dt:{name:"Тест: определение → термин",need:()=>true},
-  tp:{name:"Тест: термин → произношение",need:c=>!!c.p},
-  lt:{name:"Аудирование: что прозвучало",need:()=>canSpeak},
-  ld:{name:"Аудирование: перевод на слух",need:()=>canSpeak},
-  tone:{name:"Тоны",need:toneable},
+  td:{name:"Тест: термин → определение",need:()=>true,kind:"choice"},
+  dt:{name:"Тест: определение → термин",need:()=>true,kind:"choice"},
+  tp:{name:"Тест: термин → произношение",need:c=>!!c.p,kind:"choice"},
+  lt:{name:"Аудирование: что прозвучало",need:()=>canSpeak,kind:"choice"},
+  ld:{name:"Аудирование: перевод на слух",need:()=>canSpeak,kind:"choice"},
+  tone:{name:"Тоны: выбор тонов",need:toneable,kind:"choice"},
   wtp:{name:"Ввод: произношение",need:c=>!!c.p},
   wdt:{name:"Ввод: термин",need:()=>true},
   wtd:{name:"Ввод: перевод",need:()=>true}
@@ -1164,7 +1193,7 @@ function makeQ(type,c,deck,o={}){
     const say=listen?"listen":type==="dt"?(ex?"none":"after"):type==="tp"?(ex?"none":sayAsk?"ask":"after"):(sayAsk?"ask":"after");
     return {type,kind:"choice",card:c,head:listen?"Прослушайте":type==="dt"?"Определение":"Термин",
       prompt:listen?(type==="lt"?"Что прозвучало?":"Что означает услышанное слово?"):"Выберите "+{td:"определение",dt:"термин",tp:"произношение"}[type],
-      askHtml:listen?"":type==="dt"?esc(c.d):term(type==="td"&&showPron),ans,options:shuffle([ans,...shuffle(pool).slice(0,3)]),optHtml,say,ansHtml:fieldHtml(field,ans)};
+      askHtml:listen?"":type==="dt"?esc(c.d):term(type==="td"&&showPron),ans,options:shuffle([ans,...shuffle(pool).slice(0,nOpts()-1)]),optHtml,say,ansHtml:fieldHtml(field,ans)};
   }
   const dir={wtp:"tp",wdt:"dt",wtd:"td"}[type], ans=dir==="tp"?c.p:dir==="dt"?c.t:c.d;
   return {type,kind:"write",card:c,dir,head:dir==="dt"?"Определение":"Термин",prompt:{tp:"Напишите произношение",dt:"Напишите термин",td:"Напишите перевод"}[dir],
@@ -1200,8 +1229,8 @@ function runQuiz(deck,cfg){
       ${cfg.showType?`<div class="muted small" style="margin:4px 0 6px">${QT[q.type].name}</div>`:""}
       <div class="panel question" id="qp">${q.say==="ask"?spkBtn({...q.card,lang:q.card.lang==="off"?"auto":q.card.lang}):""}<div class="muted small" style="margin-bottom:8px">${q.head}</div>
         ${listen?`<button class="bigplay spk" data-say="${esc(q.card.t)}" data-lang="${esc(sayLang(q.card))}" aria-label="Прослушать">${PLAY_SVG}</button><div class="muted small">нажмите, чтобы прослушать ещё раз${hoverless?"":" (пробел)"}</div>`:q.askHtml}</div>
-      <p class="muted small" style="margin:14px 0 0">${q.prompt}${q.kind==="choice"&&!hoverless?" · клавиши 1-4":""}</p>
-      ${q.kind==="choice"?`<div class="opts">${q.options.map((o,k)=>`<button class="opt" data-k="${k}"><span class="k">${k+1}</span> ${q.optHtml(o)}</button>`).join("")}</div>`
+      <p class="muted small" style="margin:14px 0 0">${q.prompt}${q.kind==="choice"&&!hoverless?` · клавиши 1-${Math.min(9,q.options.length)}`:""}</p>
+      ${q.kind==="choice"?`<div class="opts${q.options.length>4&&q.options.every(o=>[...String(o)].length<=14)?" two":""}">${q.options.map((o,k)=>`<button class="opt" data-k="${k}"><span class="k">${k+1}</span> ${q.optHtml(o)}</button>`).join("")}</div>`
         :`<form id="af" autocomplete="off"><input type="text" class="answer-in" id="ans" placeholder="${q.placeholder}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done">
           <div class="row" style="margin-top:12px"><button class="btn primary" type="submit" id="chk">${cfg.exam?"Далее":"Ответить"}</button>${cfg.exam?"":`<button class="btn ghost" type="button" id="idk">Не знаю</button>`}</div></form>`}
       <div id="fb"></div><div id="nxw" class="row" style="margin-top:12px"></div>`;
@@ -1248,7 +1277,7 @@ function runQuiz(deck,cfg){
     if(!q||done||e.target.matches("textarea,select")) return;
     if(e.target.matches("input")&&!(answered&&e.key==="Enter")) return;
     if(e.code==="Space"&&q.say==="listen"&&!answered){ e.preventDefault(); speak(q.card.t,sayLang(q.card)); return; }
-    if(q.kind==="choice"&&!answered&&/^[1-4]$/.test(e.key)&&+e.key<=q.options.length){ choose(+e.key-1); return; }
+    if(q.kind==="choice"&&!answered&&/^[1-9]$/.test(e.key)&&+e.key<=q.options.length){ choose(+e.key-1); return; }
     if(e.key==="Enter"){ if(answered){ e.preventDefault(); next(); } else if(cfg.exam&&selK!=null){ e.preventDefault(); submit(q.options[selK]); } }
   };
   document.addEventListener("keydown",quizKey);
@@ -1302,7 +1331,7 @@ function viewTest(deck){
     types:o=>o.dir==="mix"?["td","dt",...(withPron?["tp"]:[])]:[o.dir==="tp"&&!withPron?"td":o.dir],
     form:o=>`<label>Что спрашивать</label>${seg(o,"dir",[["td","Термин → определение"],["dt","Определение → термин"],...(withPron?[["tp","Термин → произношение"]]:[]),["mix","Вперемешку"]])}
       ${hasPron(deck.cards)?`<label>Пиньинь под термином</label>${seg(settings,"showPron",[[true,"Показывать"],[false,"Скрыть"]])}`:""}
-      ${canSpeak?`<label>Озвучка в вопросе</label>${seg(settings,"sayAsk",[[true,"Вкл"],[false,"Выкл"]])}<p class="muted small" style="margin:6px 0 0">Если выключить, слово прозвучит только после ответа - чтобы звук не подсказывал.</p>`:""}`});
+      ${canSpeak?`<label>Озвучка в вопросе</label>${seg(settings,"sayAsk",[[true,"Вкл"],[false,"Выкл"]])}<p class="muted small" style="margin:6px 0 0">Если выключить, слово прозвучит только после ответа - чтобы звук не подсказывал.</p>`:""}${optsSeg()}`});
 }
 /* ---------- Режим «Ввод ответа» ---------- */
 function viewWrite(deck){
@@ -1322,7 +1351,7 @@ function viewListen(deck){
   if(deck.cards.length<2) return needTwo(deck);
   trainer(deck,{title:"Аудирование",key:"kartochki_listen_opts2",defaults:{ans:"lt"},types:o=>[o.ans],
     intro:"Сайт произносит слово, а вы выбираете, что прозвучало. Включите звук на телефоне.",
-    form:o=>`<label>Что выбирать</label>${seg(o,"ans",[["lt",hasCJK(deck.cards)?"Иероглиф":"Слово"],["ld","Перевод"]])}`});
+    form:o=>`<label>Что выбирать</label>${seg(o,"ans",[["lt",hasCJK(deck.cards)?"Иероглиф":"Слово"],["ld","Перевод"]])}${optsSeg()}`});
 }
 /* ---------- Тренажёр тонов ---------- */
 function viewTones(deck){
@@ -1330,7 +1359,8 @@ function viewTones(deck){
   trainer(deck,{title:"Тоны",key:"kartochki_tones_opts",defaults:{},types:()=>["tone"],
     intro:"Показывается иероглиф и несколько вариантов пиньиня, которые отличаются только тонами. Выберите правильный.",
     form:()=>`${canSpeak?`<label>Подсказка звуком</label>${seg(settings,"toneSound",[[false,"Без звука"],[true,"Озвучивать слово"]])}<p class="muted small" style="margin:6px 0 0">Со звуком тренируется слух, без звука - память.</p>`:""}
-      <label>Цвета тонов в вариантах</label>${seg(settings,"tones",[[true,"Цветом"],[false,"Без цвета"]])}`});
+      <label>Цвета тонов в вариантах</label>${seg(settings,"tones",[[true,"Цветом"],[false,"Без цвета"]])}${optsSeg()}
+      <p class="muted small" style="margin:6px 0 0">У односложного слова бывает не больше 4 вариантов тонов.</p>`});
 }
 /* ---------- Экзамен ---------- */
 function viewExam(deck){
@@ -1345,6 +1375,7 @@ function viewExam(deck){
       <p class="muted small" style="margin-top:0">Вопросы всех тренажёров вперемешку. Подсказок и проверки по ходу нет - оценка и разбор ошибок в конце.</p>
       <div class="row" style="gap:6px">${types.map(t=>`<span class="badge">${QT[t].name}</span>`).join("")}</div>
       <label>Количество вопросов</label>${seg(opt,"n",[...["10","20","30","50"].filter(v=>+v<maxN).map(v=>[v,v]),["all","Все ("+maxN+")"]])}
+      ${optsSeg()}
       ${uniq.length>=2?`<label>Раунд «Подбор» в конце</label>${seg(opt,"match",[[true,"Включить"],[false,"Без него"]])}`:""}
       <div style="margin-top:20px"><button class="btn primary" id="go">Начать экзамен</button></div></div>`;
     bindSeg(opt,()=>{ LS.set("kartochki_exam_opts",opt); setup(); });
@@ -1387,21 +1418,30 @@ function viewEndless(deck){
   const groups=[["test","Тест",["td","dt","tp"]],["write","Ввод",["wtp","wdt","wtd"]],["listen","Аудирование",["lt","ld"]],["tones","Тоны",["tone"]]]
     .map(([k,l,ts])=>[k,l,ts.filter(t=>deck.cards.some(QT[t].need)&&enoughOpts(deck,t))]).filter(g=>g[2].length);
   const opt={sel:["test"],...LS.get("kartochki_endless_opts",{})};
-  opt.sel=opt.sel.filter(k=>groups.some(g=>g[0]===k)); if(!opt.sel.length) opt.sel=[groups[0][0]];
+  // ts - выбранные виды вопросов; раньше выбирались только тренажёры целиком (sel)
+  const allTs=groups.flatMap(g=>g[2]);
+  if(!Array.isArray(opt.ts)) opt.ts=groups.filter(g=>(opt.sel||[]).includes(g[0])).flatMap(g=>g[2]);
+  opt.ts=opt.ts.filter(t=>allTs.includes(t)); if(!opt.ts.length) opt.ts=groups[0][2].slice();
+  const shortName=t=>QT[t].name.split(": ")[1]||QT[t].name;
   const setup=()=>{
     app.innerHTML=modeHead(deck,"Бесконечный режим")+`<div class="panel">
       <p class="muted small" style="margin-top:0">Вопросы выбранных тренажёров идут по кругу без конца, пока вы не нажмёте «Стоп». Карточки, на которых вы ошиблись, возвращаются через несколько вопросов.</p>
-      <label>Тренажёры (можно несколько)</label><span class="seg">${groups.map(([k,l])=>`<button data-m="${k}" class="${opt.sel.includes(k)?"on":""}">${l}</button>`).join("")}</span>
+      <label>Виды вопросов (можно несколько)</label>
+      ${groups.map(([k,l,ts])=>`<div class="etype"><div class="row" style="justify-content:space-between;gap:6px"><span class="small"><b>${l}</b></span>${ts.length>1?`<a href="#" class="small" data-mg="${k}">${ts.every(t=>opt.ts.includes(t))?"снять все":"выбрать все"}</a>`:""}</div>
+        <span class="seg">${ts.map(t=>`<button data-m="${t}" class="${opt.ts.includes(t)?"on":""}">${shortName(t)}</button>`).join("")}</span></div>`).join("")}
       ${hasPron(deck.cards)?`<label>Пиньинь под термином</label>${seg(settings,"showPron",[[true,"Показывать"],[false,"Скрыть"]])}`:""}
       ${canSpeak?`<label>Озвучка в вопросе</label>${seg(settings,"sayAsk",[[true,"Вкл"],[false,"Выкл"]])}`:""}
-      ${soundSeg()}
+      ${opt.ts.some(t=>QT[t].kind==="choice")?optsSeg():""}${soundSeg()}
       <div style="margin-top:20px"><button class="btn primary" id="go">Начать</button></div></div>`;
-    $$("[data-m]").forEach(b=>b.onclick=()=>{ const k=b.dataset.m; opt.sel=opt.sel.includes(k)?opt.sel.filter(x=>x!==k):[...opt.sel,k]; if(!opt.sel.length) opt.sel=[k]; LS.set("kartochki_endless_opts",opt); setup(); });
+    const saveTs=ts=>{ opt.ts=allTs.filter(t=>ts.includes(t)); LS.set("kartochki_endless_opts",opt); setup(); };
+    $$("[data-m]").forEach(b=>b.onclick=()=>{ const k=b.dataset.m; if(opt.ts.includes(k)){ if(opt.ts.length>1) saveTs(opt.ts.filter(x=>x!==k)); else toast("Нужен хотя бы один вид вопросов"); } else saveTs([...opt.ts,k]); });
+    $$("[data-mg]").forEach(a=>a.onclick=e=>{ e.preventDefault(); const g=groups.find(x=>x[0]===a.dataset.mg)[2];
+      if(g.every(t=>opt.ts.includes(t))){ const rest=opt.ts.filter(t=>!g.includes(t)); if(rest.length) saveTs(rest); else toast("Нужен хотя бы один вид вопросов"); } else saveTs([...opt.ts,...g]); });
     bindSeg(opt,()=>setup());
     $("#go").onclick=start;
   };
   const start=()=>{
-    const types=groups.filter(g=>opt.sel.includes(g[0])).flatMap(g=>g[2]);
+    const types=opt.ts.slice();
     const cards=deck.cards.filter(c=>types.some(t=>QT[t].need(c)));
     let pending=[], recent=[], seen=0;
     runQuiz(deck,{endless:true,tonesReq:true,showType:types.length>1,
